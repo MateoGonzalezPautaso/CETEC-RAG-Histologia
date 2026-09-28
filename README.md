@@ -211,6 +211,10 @@ El servidor usa los PDFs versionados en `data/pdf/`. Si se agregan PDFs en `app/
 3. Genera embeddings de texto (MiniLM), visuales (UNI, PLIP) e indexa todo en Qdrant local.
 4. Extrae el temario automáticamente del contenido.
 
+> **No agregar PDFs que repitan contenido de otros** (por ejemplo, una concatenación de los manuales):
+> se indexan todos los `*.pdf` de la carpeta, así que cada página quedaría duplicada con otra fuente.
+> Por eso `histologia_completo.pdf`, que usan los notebooks, vive en `notebooks/data/` y no en `data/pdf/`.
+
 El indexado se saltea solo si las colecciones de Qdrant ya están pobladas **y** existe la marca de indexación completa (`app/.qdrant_index_complete`). Si una indexación previa quedó incompleta —por una interrupción o porque algún ítem falló al indexarse— la marca no se escribe y el sistema reindexa automáticamente en el próximo arranque (los upserts son idempotentes). Para forzar una reindexación manual: borrar `app/.qdrant_index_complete` y, si se quiere empezar desde cero, borrar también `app/qdrant_data/`.
 
 ---
@@ -295,6 +299,7 @@ Cada consulta pasa por un grafo de nodos LangGraph (ver [Arquitectura](#arquitec
 ├── data/pdf/                  # Manuales en PDF versionados
 ├── docs/                      # Informes por sprint, logs de tuning y resultados de evaluación
 ├── notebooks/                 # Notebooks de exploración y evaluación de chunk size
+│   └── data/                  # histologia_completo.pdf (arch2+3+4 concatenados, solo para notebooks)
 └── README.md
 ```
 
