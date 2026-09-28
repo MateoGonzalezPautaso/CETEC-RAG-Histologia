@@ -52,6 +52,8 @@ class ChatResponse(BaseModel):
     trayectoria: list = []
     imagen_activa: Optional[str] = None
     mostrar_imagenes: bool = False
+    # Id de la traza registrada para esta interacción (ver src/trazas.py).
+    trace_id: Optional[str] = None
 
 
 # ── Lifecycle ────────────────────────────────────────────────────────
@@ -367,6 +369,7 @@ async def post_chat(req: ChatRequest):
             trayectoria=resultado.get("trayectoria", []),
             imagen_activa=resultado.get("imagen_activa"),
             mostrar_imagenes=mostrar_imgs and len(imagenes_response) > 0,
+            trace_id=resultado.get("trace_id"),
         )
 
     except ValueError as e:
