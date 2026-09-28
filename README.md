@@ -295,6 +295,7 @@ Cada consulta pasa por un grafo de nodos LangGraph (ver [Arquitectura](#arquitec
 │   │   ├── app.js
 │   │   └── style.css
 │   │
+│   ├── optimizacion/          # Etapa 2: baseline.py (golden set → trazas) y juez.py (LLM as a Judge)
 │   ├── evaluar_ragas.py       # Evaluación RAGAS del pipeline
 │   ├── eval_reliability.py    # Smoke test de confiabilidad
 │   └── eval_set_basico.json   # Conjunto de preguntas de evaluación
@@ -346,6 +347,29 @@ duración y el error si lo hubo. La respuesta de `/api/chat` devuelve el `trace_
 El formato está definido en `app/src/trazas.py` (`construir_traza`); `leer_trazas()` las carga para
 armar datasets. Las trazas contienen las consultas de los usuarios, por eso no se versionan. Se
 desactivan con `TRAZAS_HABILITADAS=false`.
+
+### Baseline y LLM as a Judge (Etapa 2)
+
+Dos pasos separados, para que el pipeline y el juez no compitan por cuota y cada uno se pueda
+retomar si se corta (volver a correr el mismo comando continúa donde quedó):
+
+```bash
+cd app
+
+# 1. Baseline: corre el golden set por el pipeline (con el servidor DETENIDO:
+#    Qdrant local no admite dos procesos). Una sesión aislada por pregunta.
+uv run python -m optimizacion.baseline --limit 3          # prueba rápida
+uv run python -m optimizacion.baseline                    # las 32 preguntas
+#    → optimizacion/resultados/baseline-<fecha>.jsonl (+ -resumen.json)
+
+# 2. Juez: puntúa correccion, fidelidad, notacion y estilo_docente (1–5) + chequeo de citas.
+uv run python -m optimizacion.juez optimizacion/resultados/baseline-<fecha>.jsonl
+#    → baseline-<fecha>-juez.jsonl (+ -juez-resumen.json)
+```
+
+El modelo juez se elige con `JUEZ_PROVEEDOR` / `JUEZ_MODELO` (por defecto Groq
+`llama-3.3-70b-versatile`). La dimensión `estilo_docente` usa una rúbrica genérica hasta contar con
+material de referencia de los docentes.
 
 ---
 

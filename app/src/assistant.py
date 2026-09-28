@@ -1491,6 +1491,9 @@ class AsistenteHistologiaQdrant:
             "trayectoria": final.get("trayectoria", []),
             "imagen_activa": os.path.basename(imagen_activa) if imagen_activa else None,
             "trace_id": traza["trace_id"],
+            # La traza completa, para quien arme datasets (optimizacion/baseline.py)
+            # sin depender de que el registro en disco esté habilitado.
+            "traza": traza,
         }
         return resultado
 
