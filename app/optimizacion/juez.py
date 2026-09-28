@@ -118,14 +118,23 @@ def chequear_citas(respuesta: str, fuentes_recuperadas: List[str], fuente_espera
     }
 
 
+def mensaje_juez(pregunta: str, referencia: str, contexto: str, respuesta: str,
+                 origen_referencia: str = "manual") -> str:
+    """Mensaje para el juez. Lo comparten la evaluación y la métrica de GEPA (optimizacion/gepa.py)."""
+    return (
+        f"PREGUNTA DEL ESTUDIANTE:\n{pregunta}\n\n"
+        f"RESPUESTA DE REFERENCIA ({origen_referencia}):\n{referencia}\n\n"
+        f"CONTEXTO RECUPERADO (lo único que el sistema tenía disponible):\n"
+        f"{(contexto or '(sin contexto recuperado)')[:6000]}\n\n"
+        f"RESPUESTA DEL SISTEMA:\n{respuesta}"
+    )
+
+
 def construir_mensaje(registro: dict) -> str:
     traza = registro["traza"]
-    contexto = traza["recuperacion"].get("contexto_documentos") or "(sin contexto recuperado)"
-    return (
-        f"PREGUNTA DEL ESTUDIANTE:\n{registro['question']}\n\n"
-        f"RESPUESTA DE REFERENCIA (manual):\n{registro['ground_truth']}\n\n"
-        f"CONTEXTO RECUPERADO (lo único que el sistema tenía disponible):\n{contexto[:6000]}\n\n"
-        f"RESPUESTA DEL SISTEMA:\n{traza['respuesta']['texto']}"
+    return mensaje_juez(
+        registro["question"], registro["ground_truth"],
+        traza["recuperacion"].get("contexto_documentos"), traza["respuesta"]["texto"],
     )
 
 
