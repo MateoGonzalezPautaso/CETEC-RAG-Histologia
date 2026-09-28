@@ -42,6 +42,20 @@ if _QDRANT_PATH_ENV:
 else:
     QDRANT_PATH = os.path.join(_BASE, "qdrant_data")
 
+# ── Trazas de interacción (Etapa 2) ───────────────────────────────────────────
+# Cada consulta se registra como una línea JSON en TRAZAS_DIR, un archivo por
+# día (UTC). Son la materia prima para el dataset de evaluación/optimización.
+VERSION_PIPELINE = "5.0"
+TRAZAS_HABILITADAS = os.getenv("TRAZAS_HABILITADAS", "true").strip().lower() not in ("0", "false", "no")
+_TRAZAS_DIR_ENV = os.getenv("TRAZAS_DIR")
+if _TRAZAS_DIR_ENV:
+    TRAZAS_DIR = (
+        _TRAZAS_DIR_ENV if os.path.isabs(_TRAZAS_DIR_ENV)
+        else os.path.abspath(os.path.join(_BASE, _TRAZAS_DIR_ENV))
+    )
+else:
+    TRAZAS_DIR = os.path.join(_BASE, "trazas")
+
 # ── Qdrant collections ────────────────────────────────────────────────────────
 COLLECTION_CHUNKS = "histo_chunks"
 COLLECTION_IMAGENES = "histo_imagenes"

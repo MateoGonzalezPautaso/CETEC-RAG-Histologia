@@ -47,6 +47,8 @@ temario_histologia.sha256
 logs/
 eval_reliability_report.json
 reporte_ragas.json
+# Trazas de interacción: contienen las consultas de los usuarios.
+app/trazas/
 
 # ─── Imágenes subidas por usuarios en el chat ─────────────────────────
 imagenes_chat/

@@ -199,6 +199,8 @@ cp .env.example app/.env
 | `ALLOWED_ORIGINS` | ❌ | Orígenes CORS permitidos (lista separada por comas, o `*`). Por defecto solo `localhost`/`127.0.0.1` | No aplica |
 | `MAX_IMAGE_MB` | ❌ | Tamaño máximo (MB) de imágenes subidas por el chat. Por defecto: `8` | No aplica |
 | `IMG_RERANK_UMBRAL` | ❌ | Umbral de similitud caption↔consulta para mostrar imágenes del manual. Por defecto: `0.35`. Subilo si aparecen imágenes poco relevantes | No aplica |
+| `TRAZAS_HABILITADAS` | ❌ | Registrar cada interacción en `TRAZAS_DIR` (ver [Trazas](#trazas-de-interacción)). Por defecto: `true` | No aplica |
+| `TRAZAS_DIR` | ❌ | Carpeta de las trazas JSONL. Por defecto: `./trazas` (dentro de `app/`) | No aplica |
 
 ---
 
@@ -285,7 +287,8 @@ Cada consulta pasa por un grafo de nodos LangGraph (ver [Arquitectura](#arquitec
 │   │   ├── qdrant_store.py    # Cliente Qdrant: esquema, upsert y búsqueda híbrida
 │   │   ├── memory.py          # Memoria semántica: historial + imagen activa por sesión
 │   │   ├── classifier.py      # Clasificador de dominio histológico (embeddings + LLM)
-│   │   └── extractors.py      # Extractor de imágenes PDF, temario y entidades
+│   │   ├── extractors.py      # Extractor de imágenes PDF, temario y entidades
+│   │   └── trazas.py          # Registro de trazas de interacción (JSONL)
 │   │
 │   ├── client/                # Frontend web (HTML + JS + CSS, sin frameworks)
 │   │   ├── index.html
@@ -304,8 +307,8 @@ Cada consulta pasa por un grafo de nodos LangGraph (ver [Arquitectura](#arquitec
 ```
 
 > Carpetas generadas automáticamente en runtime (no versionadas): `app/imagenes_extraidas/`
-> (imágenes extraídas de los PDFs), `app/imagenes_chat/` (imágenes subidas por usuarios) y
-> `app/qdrant_data/` (base Qdrant local persistente).
+> (imágenes extraídas de los PDFs), `app/imagenes_chat/` (imágenes subidas por usuarios),
+> `app/qdrant_data/` (base Qdrant local persistente) y `app/trazas/` (trazas de interacción).
 
 ---
 
@@ -331,6 +334,18 @@ uv run python evaluar_ragas.py --no-ragas --indices 1,5,9
 ```
 
 No ejecutar RAGAS y el frontend en paralelo — compiten por cuota de modelos.
+
+### Trazas de interacción
+
+Cada consulta que llega a `/api/chat` se registra como una línea JSON en
+`app/trazas/trazas-AAAA-MM-DD.jsonl` (un archivo por día, UTC). Cada traza incluye la consulta
+original y reescrita, la clasificación de dominio, los resultados recuperados (fuente, página,
+similitud y texto), el contexto que recibió el LLM, la respuesta, la trayectoria por nodo, la
+duración y el error si lo hubo. La respuesta de `/api/chat` devuelve el `trace_id` correspondiente.
+
+El formato está definido en `app/src/trazas.py` (`construir_traza`); `leer_trazas()` las carga para
+armar datasets. Las trazas contienen las consultas de los usuarios, por eso no se versionan. Se
+desactivan con `TRAZAS_HABILITADAS=false`.
 
 ---
 

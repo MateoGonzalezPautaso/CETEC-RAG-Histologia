@@ -26,6 +26,7 @@ from .classifier import ClasificadorSemantico
 from .config import (
     COLLECTION_CHUNKS, COLLECTION_IMAGENES, DIRECTORIO_IMAGENES, DIRECTORIO_PDFS,
     FEATURES_DISCRIMINATORIAS, QDRANT_PATH, SIMILARITY_THRESHOLD,
+    TRAZAS_DIR, TRAZAS_HABILITADAS,
     _safe, normalizar,
 )
 from .embeddings import PlipWrapper, UniWrapper
@@ -37,6 +38,7 @@ from .llm import (
 )
 from .memory import SemanticMemory
 from .qdrant_store import QdrantVectorStore
+from .trazas import RegistroTrazas, construir_traza
 
 
 class AsistenteHistologiaQdrant:
@@ -64,6 +66,7 @@ class AsistenteHistologiaQdrant:
         self.compiled_graph = None
         self.memory_saver = None
         self.contenido_base = ""
+        self.registro_trazas = RegistroTrazas(TRAZAS_DIR, habilitado=TRAZAS_HABILITADAS)
 
         self.device = self._detect_device()
         print(f"✅ AsistenteHistologiaQdrant v5.0 inicializado en {self.device}")
@@ -1408,8 +1411,10 @@ class AsistenteHistologiaQdrant:
         consulta_texto: str,
         imagen_path: Optional[str] = None,
         user_id: str = "default_user",
+        origen: str = "api",
     ) -> dict:
         memoria = self._get_memoria(user_id)
+        t0 = time.time()
         tiene_imagen_activa = memoria.tiene_imagen_previa() or bool(imagen_path)
 
         print(f"\n{'='*70}")
@@ -1452,13 +1457,22 @@ class AsistenteHistologiaQdrant:
             },
         }
 
+        error = None
         try:
             final = await self.compiled_graph.ainvoke(initial_state, config=config)
             respuesta = final["respuesta_final"]
         except Exception as e:
             import traceback; traceback.print_exc()
             respuesta = f"Error: {e}"
+            error = respuesta
             final = {}
+
+        traza = construir_traza(
+            final=final, consulta_original=consulta_texto, session_id=user_id,
+            imagen_subida=imagen_path, duracion_s=time.time() - t0,
+            modelo=getattr(self.llm, "model_name", None), origen=origen, error=error,
+        )
+        self.registro_trazas.registrar(traza)
 
         print(f"\n{'='*70}\n📖 RESPUESTA:\n{'='*70}")
         print(respuesta)
@@ -1476,6 +1490,7 @@ class AsistenteHistologiaQdrant:
             "imagenes_para_mostrar": final.get("imagenes_para_mostrar", []),
             "trayectoria": final.get("trayectoria", []),
             "imagen_activa": os.path.basename(imagen_activa) if imagen_activa else None,
+            "trace_id": traza["trace_id"],
         }
         return resultado
 
