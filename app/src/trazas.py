@@ -52,6 +52,7 @@ def construir_traza(
     modelo: Optional[str] = None,
     origen: str = "api",
     error: Optional[str] = None,
+    prompt: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Arma el registro de una interacción a partir del estado final del grafo.
 
@@ -71,6 +72,8 @@ def construir_traza(
         "session_id": session_id,
         "version_pipeline": VERSION_PIPELINE,
         "modelo": modelo,
+        # Prompt de respuesta activo (default u optimizado por GEPA, ver src/prompts.py).
+        "prompt_respuesta": prompt or {"fuente": "default"},
         "consulta": {
             "original": consulta_original,
             "reescrita": final.get("consulta_texto"),

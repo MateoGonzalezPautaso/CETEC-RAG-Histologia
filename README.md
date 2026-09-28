@@ -201,6 +201,8 @@ cp .env.example app/.env
 | `IMG_RERANK_UMBRAL` | ❌ | Umbral de similitud caption↔consulta para mostrar imágenes del manual. Por defecto: `0.35`. Subilo si aparecen imágenes poco relevantes | No aplica |
 | `TRAZAS_HABILITADAS` | ❌ | Registrar cada interacción en `TRAZAS_DIR` (ver [Trazas](#trazas-de-interacción)). Por defecto: `true` | No aplica |
 | `TRAZAS_DIR` | ❌ | Carpeta de las trazas JSONL. Por defecto: `./trazas` (dentro de `app/`) | No aplica |
+| `PROMPTS_OPTIMIZADOS` | ❌ | Usar el prompt de respuesta optimizado por GEPA (ver [Optimización](#optimización-del-prompt-con-dspy-gepa-etapa-2)). Por defecto: `false` | No aplica |
+| `PROMPTS_OPTIMIZADOS_PATH` | ❌ | Archivo del prompt optimizado. Por defecto: `./optimizacion/optimized_prompts.json` | No aplica |
 
 ---
 
@@ -288,6 +290,7 @@ Cada consulta pasa por un grafo de nodos LangGraph (ver [Arquitectura](#arquitec
 │   │   ├── memory.py          # Memoria semántica: historial + imagen activa por sesión
 │   │   ├── classifier.py      # Clasificador de dominio histológico (embeddings + LLM)
 │   │   ├── extractors.py      # Extractor de imágenes PDF, temario y entidades
+│   │   ├── prompts.py         # Prompt de respuesta optimizable (carga optimized_prompts.json)
 │   │   └── trazas.py          # Registro de trazas de interacción (JSONL)
 │   │
 │   ├── client/                # Frontend web (HTML + JS + CSS, sin frameworks)
@@ -295,7 +298,7 @@ Cada consulta pasa por un grafo de nodos LangGraph (ver [Arquitectura](#arquitec
 │   │   ├── app.js
 │   │   └── style.css
 │   │
-│   ├── optimizacion/          # Etapa 2: baseline.py (golden set → trazas) y juez.py (LLM as a Judge)
+│   ├── optimizacion/          # Etapa 2: baseline.py, juez.py, gepa.py (DSPy GEPA) y comparar.py
 │   ├── evaluar_ragas.py       # Evaluación RAGAS del pipeline
 │   ├── eval_reliability.py    # Smoke test de confiabilidad
 │   └── eval_set_basico.json   # Conjunto de preguntas de evaluación
@@ -370,6 +373,48 @@ uv run python -m optimizacion.juez optimizacion/resultados/baseline-<fecha>.json
 El modelo juez se elige con `JUEZ_PROVEEDOR` / `JUEZ_MODELO` (por defecto Groq
 `llama-3.3-70b-versatile`). La dimensión `estilo_docente` usa una rúbrica genérica hasta contar con
 material de referencia de los docentes.
+
+### Optimización del prompt con DSPy GEPA (Etapa 2)
+
+`optimizacion/gepa.py` evoluciona la parte estática del prompt de respuesta en modo texto (reglas +
+estilo, ver `src/prompts.py`). Entrena con los registros del baseline (pregunta + contexto que vio el
+LLM + respuesta de referencia) y usa como métrica el mismo juez, con su feedback por dimensión.
+
+```bash
+cd app
+uv sync --group optim                     # instala DSPy (no se instala por defecto)
+
+# 3. Probar programa + juez sobre un ejemplo
+uv run python -m optimizacion.gepa optimizacion/resultados/baseline-completo.jsonl --dry-run
+
+# 4. Optimizar (light/medium/heavy o --max-metric-calls N)
+uv run python -m optimizacion.gepa optimizacion/resultados/baseline-completo.jsonl --budget light
+#    → optimizacion/resultados/gepa-<fecha>/optimized_prompts.json (+ módulo DSPy y logs)
+
+# Con respuestas de referencia del docente (clonación de estilo):
+uv run python -m optimizacion.gepa optimizacion/resultados/baseline-completo.jsonl \
+  --ejemplos-docente ejemplos_docente.json   # [{"question": "...", "professor_response": "..."}]
+```
+
+El prompt optimizado **no se activa solo**. Para evaluarlo contra el baseline:
+
+```bash
+cp optimizacion/resultados/gepa-<fecha>/optimized_prompts.json optimizacion/optimized_prompts.json
+PROMPTS_OPTIMIZADOS=true uv run python -m optimizacion.baseline --salida optimizacion/resultados/baseline-gepa.jsonl
+uv run python -m optimizacion.juez optimizacion/resultados/baseline-gepa.jsonl
+uv run python -m optimizacion.comparar \
+  optimizacion/resultados/baseline-completo-juez.jsonl optimizacion/resultados/baseline-gepa-juez.jsonl \
+  --solo-val optimizacion/resultados/gepa-<fecha>/optimized_prompts.json
+```
+
+`--solo-val` compara solo las preguntas de validación (las que GEPA no usó para proponer cambios).
+Si el resultado mejora, se deja `PROMPTS_OPTIMIZADOS=true` en `app/.env`; cada traza registra qué
+prompt estaba activo (`prompt_respuesta`). El modo multimodal no se modifica.
+
+El archivo usa el mismo formato que el agente de Física de
+[`dracero/a2a-test-alone`](https://github.com/dracero/a2a-test-alone)
+(`{"metadata", "prompts": {"direct_response": {"instruction", "demos"}}}`), para poder reutilizar el
+esquema en el orquestador BeAI.
 
 ---
 

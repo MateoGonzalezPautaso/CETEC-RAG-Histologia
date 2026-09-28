@@ -56,6 +56,19 @@ if _TRAZAS_DIR_ENV:
 else:
     TRAZAS_DIR = os.path.join(_BASE, "trazas")
 
+# ── Prompts optimizados con DSPy GEPA (Etapa 2) ───────────────────────────────
+# Desactivado por defecto: el pipeline usa los prompts originales hasta que un
+# prompt optimizado se valide contra el baseline.
+PROMPTS_OPTIMIZADOS = os.getenv("PROMPTS_OPTIMIZADOS", "false").strip().lower() in ("1", "true", "yes", "si", "sí")
+_PROMPTS_PATH_ENV = os.getenv("PROMPTS_OPTIMIZADOS_PATH")
+if _PROMPTS_PATH_ENV:
+    PROMPTS_OPTIMIZADOS_PATH = (
+        _PROMPTS_PATH_ENV if os.path.isabs(_PROMPTS_PATH_ENV)
+        else os.path.abspath(os.path.join(_BASE, _PROMPTS_PATH_ENV))
+    )
+else:
+    PROMPTS_OPTIMIZADOS_PATH = os.path.join(_BASE, "optimizacion", "optimized_prompts.json")
+
 # ── Qdrant collections ────────────────────────────────────────────────────────
 COLLECTION_CHUNKS = "histo_chunks"
 COLLECTION_IMAGENES = "histo_imagenes"

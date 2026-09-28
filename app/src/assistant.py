@@ -25,8 +25,8 @@ from langgraph.graph import END, START, StateGraph
 from .classifier import ClasificadorSemantico
 from .config import (
     COLLECTION_CHUNKS, COLLECTION_IMAGENES, DIRECTORIO_IMAGENES, DIRECTORIO_PDFS,
-    FEATURES_DISCRIMINATORIAS, QDRANT_PATH, SIMILARITY_THRESHOLD,
-    TRAZAS_DIR, TRAZAS_HABILITADAS,
+    FEATURES_DISCRIMINATORIAS, PROMPTS_OPTIMIZADOS, PROMPTS_OPTIMIZADOS_PATH,
+    QDRANT_PATH, SIMILARITY_THRESHOLD, TRAZAS_DIR, TRAZAS_HABILITADAS,
     _safe, normalizar,
 )
 from .embeddings import PlipWrapper, UniWrapper
@@ -37,6 +37,7 @@ from .llm import (
     userdata,
 )
 from .memory import SemanticMemory
+from .prompts import CLAVE_RESPUESTA_TEXTO, INSTRUCCION_BASE_TEXTO, INSTRUCCION_PROSA, PromptsOptimizados
 from .qdrant_store import QdrantVectorStore
 from .trazas import RegistroTrazas, construir_traza
 
@@ -67,6 +68,7 @@ class AsistenteHistologiaQdrant:
         self.memory_saver = None
         self.contenido_base = ""
         self.registro_trazas = RegistroTrazas(TRAZAS_DIR, habilitado=TRAZAS_HABILITADAS)
+        self.prompts = PromptsOptimizados(PROMPTS_OPTIMIZADOS_PATH, habilitado=PROMPTS_OPTIMIZADOS)
 
         self.device = self._detect_device()
         print(f"✅ AsistenteHistologiaQdrant v5.0 inicializado en {self.device}")
@@ -845,14 +847,7 @@ class AsistenteHistologiaQdrant:
                 "disponible. NO inventes contenido.\n"
             )
 
-        instruccion_prosa = (
-            "ESTILO DE RESPUESTA:\n"
-            "- Respondé en prosa, como un profesor explicando.\n"
-            "- Evitá listas con bullets y formato estructurado rígido.\n"
-            "- Primero respondé directamente la pregunta en 1 a 3 frases.\n"
-            "- Agregá explicación solo si aporta al punto consultado.\n"
-            "- Tono didáctico y natural.\n"
-        )
+        instruccion_prosa = INSTRUCCION_PROSA
         instruccion_continuidad = (
             "- Adaptá tu respuesta como continuación natural del diálogo, "
             "sin repetir información ya proporcionada.\n"
@@ -878,14 +873,18 @@ class AsistenteHistologiaQdrant:
             )
 
         if es_solo_texto:
+            # La instrucción optimizada por GEPA reemplaza la parte estática
+            # (reglas + estilo); lo dinámico se sigue agregando igual.
+            optimizada = self.prompts.instruccion(CLAVE_RESPUESTA_TEXTO)
+            if optimizada:
+                return (
+                    f"{optimizada}\n\n"
+                    f"{ontologia_str}\n"
+                    f"{instruccion_continuidad}{instruccion_imagenes}"
+                    f"{self.prompts.demos_texto(CLAVE_RESPUESTA_TEXTO)}"
+                )
             return (
-                "Eres un asistente experto de histología. Respondés consultas de texto "
-                "basándote EXCLUSIVAMENTE en el contenido del manual/base de datos.\n\n"
-                "REGLAS:\n"
-                "1. Usá SOLO la información de las SECCIONES DEL MANUAL proporcionadas.\n"
-                "2. Citá las fuentes con [Manual: archivo].\n"
-                "3. NO inventes información que no esté en las secciones proporcionadas.\n"
-                "4. Si el tema NO aparece en el manual ni en la ontología, indicalo.\n\n"
+                f"{INSTRUCCION_BASE_TEXTO}"
                 f"{ontologia_str}\n"
                 f"{instruccion_prosa}{instruccion_continuidad}{instruccion_imagenes}"
             )
@@ -1471,6 +1470,9 @@ class AsistenteHistologiaQdrant:
             final=final, consulta_original=consulta_texto, session_id=user_id,
             imagen_subida=imagen_path, duracion_s=time.time() - t0,
             modelo=getattr(self.llm, "model_name", None), origen=origen, error=error,
+            # El prompt optimizado solo aplica al modo texto.
+            prompt=({"fuente": "multimodal"} if final.get("tiene_imagen")
+                    else self.prompts.descripcion(CLAVE_RESPUESTA_TEXTO)),
         )
         self.registro_trazas.registrar(traza)
 
