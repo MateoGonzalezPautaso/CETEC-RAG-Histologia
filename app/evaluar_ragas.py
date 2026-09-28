@@ -29,7 +29,8 @@ from src.config import DIRECTORIO_PDFS
 from src.graph import AgentState
 
 # ═══════════════════════════════════════════════════════════════════════
-# GOLDEN SET — 20 preguntas con ground truth del manual
+# GOLDEN SET — 32 preguntas con ground truth del manual
+# (12 de arch3/arch4 + 20 de arch2)
 # ═══════════════════════════════════════════════════════════════════════
 
 GOLDEN_SET = [
@@ -104,6 +105,129 @@ GOLDEN_SET = [
         "ground_truth": "El intersticio testicular contiene tejido conectivo laxo, vasos sanguineos y celulas intersticiales de Leydig localizadas entre los tubulos seminiferos.",
         "fuente_esperada": "arch4.pdf",
         "paginas_esperadas": [1, 15],
+    },
+    # ── arch2 (Sprint 1/2: cartílago, hueso, músculo, tejido nervioso) ──
+    # Recuperadas del golden set del notebook v4.2. Van al final para que
+    # `--limit 12` siga evaluando las mismas preguntas que el baseline previo.
+    {
+        "question": "Cuales son las dos capas del pericondrio y que celulas contiene cada una?",
+        "ground_truth": "El pericondrio tiene una capa fibrosa con fibroblastos y fibras de colagena, y una capa condrogena con celulas condrogenas y condroblastos.",
+        "fuente_esperada": "arch2.pdf",
+        "paginas_esperadas": [1],
+    },
+    {
+        "question": "Que estructuras se identifican en el cartilago hialino?",
+        "ground_truth": "En el cartilago hialino se identifican nidos o grupos isogenos, condrocitos, condroblastos, y matriz territorial e interterritorial.",
+        "fuente_esperada": "arch2.pdf",
+        "paginas_esperadas": [1, 2],
+    },
+    {
+        "question": "Que laminilla corresponde al cartilago hialino de traquea?",
+        "ground_truth": "La laminilla numero 44 Traquea 44 ES corresponde al cartilago hialino, donde se senala el pericondrio con su capa fibrosa y condrogena.",
+        "fuente_esperada": "arch2.pdf",
+        "paginas_esperadas": [1],
+    },
+    {
+        "question": "Cuales son las estructuras senaladas en la lamina de laringe 43?",
+        "ground_truth": "En la lamina de laringe 43 se senalan nidos, condrocitos, matriz territorial e interterritorial del cartilago hialino.",
+        "fuente_esperada": "arch2.pdf",
+        "paginas_esperadas": [2],
+    },
+    {
+        "question": "Que caracteristica distintiva tiene el cartilago elastico respecto al hialino?",
+        "ground_truth": "El cartilago elastico contiene fibras elasticas en su matriz, ademas de nidos, condrocitos, condroblastos y matriz territorial e interterritorial.",
+        "fuente_esperada": "arch2.pdf",
+        "paginas_esperadas": [3],
+    },
+    {
+        "question": "En que laminilla se observa el cartilago elastico y de que organo proviene?",
+        "ground_truth": "El cartilago elastico se observa en la laminilla de piel de oreja de raton 85a.",
+        "fuente_esperada": "arch2.pdf",
+        "paginas_esperadas": [3],
+    },
+    {
+        "question": "Que se observa en el cartilago hialino del disco de crecimiento?",
+        "ground_truth": "En el cartilago hialino del disco de crecimiento se observan hileras de condrocitos. La laminilla corresponde a hueso fracturado 79c.",
+        "fuente_esperada": "arch2.pdf",
+        "paginas_esperadas": [4],
+    },
+    {
+        "question": "Como se distingue el cartilago fibroso histologicamente?",
+        "ground_truth": "El cartilago fibroso se distingue por hileras de condrocitos y fibras de colagena dispuestas regularmente.",
+        "fuente_esperada": "arch2.pdf",
+        "paginas_esperadas": [5],
+    },
+    {
+        "question": "Cuales son los tipos de celulas del hueso compacto?",
+        "ground_truth": "Las celulas del hueso compacto son osteoprogenitoras, osteoblastos, osteocitos y osteoclastos.",
+        "fuente_esperada": "arch2.pdf",
+        "paginas_esperadas": [7, 8, 9],
+    },
+    {
+        "question": "Que es la osteona y que estructuras la componen?",
+        "ground_truth": "La osteona es la unidad estructural del hueso compacto, formada por laminas concentricas alrededor del conducto de Havers.",
+        "fuente_esperada": "arch2.pdf",
+        "paginas_esperadas": [10],
+    },
+    {
+        "question": "Que diferencia hay entre el conducto de Havers y el de Volkmann?",
+        "ground_truth": "El conducto de Havers corre longitudinalmente en el centro de la osteona. El conducto de Volkmann corre transversalmente conectando osteonas y el periostio.",
+        "fuente_esperada": "arch2.pdf",
+        "paginas_esperadas": [16],
+    },
+    {
+        "question": "Que funcion tienen los osteoclastos y donde se ubican?",
+        "ground_truth": "Los osteoclastos son celulas gigantes multinucleadas de 20 a 100 micras cuya funcion es la reabsorcion osea. Se encuentran en las lagunas de Howship.",
+        "fuente_esperada": "arch2.pdf",
+        "paginas_esperadas": [9],
+    },
+    {
+        "question": "Cuales son los tres tipos de tejido muscular y sus caracteristicas principales?",
+        "ground_truth": "Estriado voluntario con celulas cilindricas y nucleos perifericos, estriado involuntario o cardiaco con discos intercalares, y liso involuntario con celulas fusiformes y nucleo central.",
+        "fuente_esperada": "arch2.pdf",
+        "paginas_esperadas": [17],
+    },
+    {
+        "question": "Que estructuras componen la sarcomera?",
+        "ground_truth": "La sarcomera se extiende entre dos lineas Z e incluye banda A oscura, banda I clara, banda H dentro de la A, y linea M al centro de la H.",
+        "fuente_esperada": "arch2.pdf",
+        "paginas_esperadas": [17, 22],
+    },
+    {
+        "question": "Que laminilla se usa para observar el tejido muscular liso involuntario?",
+        "ground_truth": "Se usa la laminilla de estomago HE para observar los miocitos lisos involuntarios.",
+        "fuente_esperada": "arch2.pdf",
+        "paginas_esperadas": [21],
+    },
+    {
+        "question": "Como se clasifican las neuronas segun el numero de prolongaciones?",
+        "ground_truth": "Las neuronas se clasifican en unipolares, bipolares, pseudounipolares y multipolares.",
+        "fuente_esperada": "arch2.pdf",
+        "paginas_esperadas": [24],
+    },
+    {
+        "question": "En que laminilla se observan las neuronas piriformes y en grano?",
+        "ground_truth": "Las neuronas piriformes y en grano se observan en la laminilla de corteza cerebelosa 61 HE.",
+        "fuente_esperada": "arch2.pdf",
+        "paginas_esperadas": [27],
+    },
+    {
+        "question": "Cual es la diferencia entre astrocito protoplasmático y fibroso?",
+        "ground_truth": "El astrocito protoplasmático tiene prolongaciones cortas y gruesas en sustancia gris. El fibroso tiene prolongaciones largas y delgadas en sustancia blanca.",
+        "fuente_esperada": "arch2.pdf",
+        "paginas_esperadas": [31],
+    },
+    {
+        "question": "Que funcion tienen los oligodendrocitos?",
+        "ground_truth": "Los oligodendrocitos participan en la formacion de la mielina para la proteccion de los axones en el sistema nervioso central.",
+        "fuente_esperada": "arch2.pdf",
+        "paginas_esperadas": [31, 33],
+    },
+    {
+        "question": "Que son las celulas ependimarias y donde se ubican?",
+        "ground_truth": "Las celulas ependimarias revisten el canal ependimario y el conducto central de la medula espinal. Son cubicas o cilindricas.",
+        "fuente_esperada": "arch2.pdf",
+        "paginas_esperadas": [35],
     },
 ]
 
