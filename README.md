@@ -190,7 +190,8 @@ cp .env.example app/.env
 
 | Variable | Requerida | Descripción | Dónde obtenerla |
 |---|---|---|---|
-| `GROQ_API_KEY` | ✅ | LLM principal (Llama-4-Scout) | https://console.groq.com/keys |
+| `GROQ_API_KEY` | ✅ | LLM principal (Llama-4-Scout). Alcanza con esta o con `GROQ_API_KEYS` | https://console.groq.com/keys |
+| `GROQ_API_KEYS` | ❌ | Varias keys gratuitas separadas por comas (una por integrante). Se rotan ante límites de uso (429); `GROQ_API_KEY` se suma al pool | https://console.groq.com/keys |
 | `HF_TOKEN` | ✅ | Descarga modelos UNI y PLIP — requiere aceptar los términos del modelo | https://huggingface.co/settings/tokens |
 | `QDRANT_PATH` | ❌ | Carpeta local persistente de Qdrant. Por defecto: `./qdrant_data` | No aplica |
 | `QDRANT_URL` | ❌ | URL de Qdrant remoto (Cloud). **Dejar VACÍO para usar la base local** — un valor placeholder/inválido hace fallar la conexión con un error de DNS | https://cloud.qdrant.io/ |
@@ -284,6 +285,7 @@ Cada consulta pasa por un grafo de nodos LangGraph (ver [Arquitectura](#arquitec
 │   │   ├── assistant.py       # Orquestador principal: grafo LangGraph + todos los nodos
 │   │   ├── graph.py           # AgentState: estado compartido entre nodos
 │   │   ├── config.py          # Constantes, rutas, anclas semánticas, reglas de entidades
+│   │   ├── claves.py          # Rotación de API keys de Groq (GROQ_API_KEYS)
 │   │   ├── llm.py             # Wrappers de LLM con reintentos y manejo de cuota
 │   │   ├── embeddings.py      # Wrappers PLIP y UNI para embeddings de imagen
 │   │   ├── qdrant_store.py    # Cliente Qdrant: esquema, upsert y búsqueda híbrida
@@ -448,7 +450,7 @@ Material complementario para entender el diseño, las decisiones y los resultado
 - Si se configuró `QDRANT_URL`, verificar también `QDRANT_KEY`.
 
 **El LLM responde "sin cuota"**
-- La cuota de Groq se resetea diariamente. Esperar o cambiar `GROQ_API_KEY`.
+- La cuota de Groq se resetea diariamente. Esperar, o cargar varias keys en `GROQ_API_KEYS` para que se roten solas (pipeline, juez y GEPA). Una key con límite diario queda en pausa 1 hora (`GROQ_COOLDOWN_DIARIO_S`) y una con límite por minuto, 60 s (`GROQ_COOLDOWN_MINUTO_S`).
 - El sistema bloquea automáticamente nuevas llamadas por 5 minutos tras detectar cuota agotada (configurable con `LLM_QUOTA_BLOCK_SECONDS`).
 
 **No aparecen imágenes del manual**

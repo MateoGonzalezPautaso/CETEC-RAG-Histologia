@@ -17,11 +17,11 @@ from typing import Any, Dict, List, Optional
 import fitz  # PyMuPDF
 import torch
 from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_groq import ChatGroq
 from langchain_huggingface import HuggingFaceEmbeddings
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
 
+from .claves import crear_chat_groq
 from .classifier import ClasificadorSemantico
 from .config import (
     COLLECTION_CHUNKS, COLLECTION_IMAGENES, DIRECTORIO_IMAGENES, DIRECTORIO_PDFS,
@@ -111,11 +111,7 @@ class AsistenteHistologiaQdrant:
         print("✅ Todos los componentes inicializados")
 
     def _init_modelos(self):
-        self.llm = ChatGroq(
-            model="meta-llama/llama-4-scout-17b-16e-instruct",
-            api_key=userdata.get("GROQ_API_KEY"),
-            temperature=0, max_retries=1,
-        )
+        self.llm = crear_chat_groq("meta-llama/llama-4-scout-17b-16e-instruct", temperature=0, max_retries=1)
         print("✅ Groq inicializado")
 
         self.embeddings = HuggingFaceEmbeddings(

@@ -92,8 +92,8 @@ def crear_llm_juez(proveedor: Optional[str] = None, modelo: Optional[str] = None
         from langchain_openai import ChatOpenAI
         llm = ChatOpenAI(model=modelo, api_key=os.getenv("OPENAI_API_KEY"), temperature=0, max_retries=1)
     else:
-        from langchain_groq import ChatGroq
-        llm = ChatGroq(model=modelo, api_key=os.getenv("GROQ_API_KEY"), temperature=0, max_retries=1)
+        from src.claves import crear_chat_groq
+        llm = crear_chat_groq(modelo, temperature=0, max_retries=1)
     return llm, f"{proveedor}/{modelo}"
 
 
