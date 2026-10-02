@@ -69,9 +69,17 @@ class ExtractorImagenesPDF:
         return image.resize((new_w, new_h), self.config.RESAMPLING_ALGORITHM)
 
     def _fallback_render_page(self, pdf_path: str, page_num: int) -> Optional[Image.Image]:
+        # PyMuPDF renderiza la página sin depender de Poppler (que en Windows no
+        # suele estar instalado); pdf2image queda como segunda opción.
+        try:
+            print(f"  🔄 Fallback: rendering page {page_num} with PyMuPDF")
+            with fitz.open(pdf_path) as doc:
+                pix = doc[page_num - 1].get_pixmap(dpi=self.config.FALLBACK_DPI)
+                return Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+        except Exception as e:
+            print(f"  ⚠️ PyMuPDF no pudo renderizar la página {page_num}: {e}")
         try:
             from pdf2image import convert_from_path
-            print(f"  🔄 Fallback: rendering page {page_num} with pdf2image")
             pages = convert_from_path(pdf_path, first_page=page_num, last_page=page_num, dpi=self.config.FALLBACK_DPI)
             return pages[0] if pages else None
         except Exception as e:
