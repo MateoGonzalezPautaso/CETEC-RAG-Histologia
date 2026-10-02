@@ -15,7 +15,7 @@
   <img src="https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white" alt="FastAPI">
   <img src="https://img.shields.io/badge/LangGraph-1C3C3C?logo=langchain&logoColor=white" alt="LangGraph">
   <img src="https://img.shields.io/badge/Qdrant-DC244C?logo=qdrant&logoColor=white" alt="Qdrant">
-  <img src="https://img.shields.io/badge/LLM-Llama_4_Scout_(Groq)-F55036" alt="Groq">
+  <img src="https://img.shields.io/badge/LLM-Qwen_3.8_27B_(Groq)-F55036" alt="Groq">
   <img src="https://img.shields.io/badge/License-MIT-green" alt="MIT">
 </p>
 
@@ -62,7 +62,7 @@ Proyecto desarrollado en el **CETEC UBATIC** (Facultad de Ingeniería, Universid
 | **Equipo (Grupo 2)** | Mateo Gonzalez Pautaso · Alén Calandria |
 | **Período** | 9 de febrero – 29 de junio de 2026 |
 
-**Stack:** FastAPI · LangGraph · Qdrant · Groq (Llama-4-Scout) · MiniLM · UNI/PLIP · frontend web
+**Stack:** FastAPI · LangGraph · Qdrant · Groq (Qwen 3.8 27B) · MiniLM · UNI/PLIP · frontend web
 
 ---
 
@@ -124,7 +124,7 @@ flowchart TD
 | **Qdrant** (`qdrant_store.py`) | Base vectorial con vectores nombrados (texto / UNI / PLIP) |
 | **UNI + PLIP** (`embeddings.py`) | *Foundation models* de patología para embeddings de imagen |
 | **MiniLM** | Embeddings de texto (`all-MiniLM-L6-v2`) |
-| **Llama-4-Scout** vía Groq (`llm.py`) | LLM generador, con reintentos y manejo de cuota |
+| **Qwen 3.8 27B** vía Groq (`llm.py`, `claves.py`) | LLM generador multimodal, con reintentos, manejo de cuota y rotación de keys. Hasta la etapa 1 fue Llama-4-Scout, que Groq retiró del plan gratuito el 17/07/2026 |
 | **Clasificador** (`classifier.py`) | Filtro de dominio (similitud semántica + árbitro LLM) |
 | **Memoria** (`memory.py`) | Historial + imagen activa, por sesión |
 | **Extractores** (`extractors.py`) | PDF → texto/imágenes/temario + entidades |
@@ -172,8 +172,8 @@ La primera vez también crea un acceso directo **«RAG Histología»** en el esc
 |---|---|---|
 | Python 3.10+ | Ejecutar el backend | `python3 --version` |
 | [uv](https://docs.astral.sh/uv/) | Gestor de paquetes Python | `curl -LsSf https://astral.sh/uv/install.sh \| sh` |
-| Tesseract OCR | Extraer texto de imágenes en PDFs | `sudo apt install tesseract-ocr tesseract-ocr-spa` |
-| Poppler | Renderizar PDFs como imágenes | `sudo apt install poppler-utils` |
+| Tesseract OCR (opcional) | Texto OCR de las imágenes del manual. Sin Tesseract se indexa igual, sin ese texto | `sudo apt install tesseract-ocr tesseract-ocr-spa` |
+| Poppler (opcional) | Respaldo para renderizar páginas; por defecto se usa PyMuPDF | `sudo apt install poppler-utils` |
 
 > **Hardware:** no requiere GPU — corre en **CPU** por defecto (una GPU NVIDIA con CUDA solo acelera).
 > Recomendado **≥ 8 GB de RAM**. La primera ejecución descarga el modelo **UNI (~1.2 GB)** desde HuggingFace.
@@ -190,7 +190,7 @@ cp .env.example app/.env
 
 | Variable | Requerida | Descripción | Dónde obtenerla |
 |---|---|---|---|
-| `GROQ_API_KEY` | ✅ | LLM principal (Llama-4-Scout). Alcanza con esta o con `GROQ_API_KEYS` | https://console.groq.com/keys |
+| `GROQ_API_KEY` | ✅ | LLM principal. Alcanza con esta o con `GROQ_API_KEYS` | https://console.groq.com/keys |
 | `GROQ_API_KEYS` | ❌ | Varias keys gratuitas separadas por comas (una por integrante). Se rotan ante límites de uso (429); `GROQ_API_KEY` se suma al pool | https://console.groq.com/keys |
 | `HF_TOKEN` | ✅ | Descarga modelos UNI y PLIP — requiere aceptar los términos del modelo | https://huggingface.co/settings/tokens |
 | `QDRANT_PATH` | ❌ | Carpeta local persistente de Qdrant. Por defecto: `./qdrant_data` | No aplica |
@@ -300,7 +300,7 @@ Cada consulta pasa por un grafo de nodos LangGraph (ver [Arquitectura](#arquitec
 │   │   ├── app.js
 │   │   └── style.css
 │   │
-│   ├── optimizacion/          # Etapa 2: baseline.py, juez.py, gepa.py (DSPy GEPA) y comparar.py
+│   ├── optimizacion/          # Etapa 2: modelos.py, baseline.py, juez.py, gepa.py (DSPy GEPA) y comparar.py
 │   ├── evaluar_ragas.py       # Evaluación RAGAS del pipeline
 │   ├── eval_reliability.py    # Smoke test de confiabilidad
 │   └── eval_set_basico.json   # Conjunto de preguntas de evaluación
@@ -361,6 +361,9 @@ retomar si se corta (volver a correr el mismo comando continúa donde quedó):
 ```bash
 cd app
 
+# 0. Verificar que las keys vean los modelos del proyecto (y que respondan)
+uv run python -m optimizacion.modelos --probar
+
 # 1. Baseline: corre el golden set por el pipeline (con el servidor DETENIDO:
 #    Qdrant local no admite dos procesos). Una sesión aislada por pregunta.
 uv run python -m optimizacion.baseline --limit 3          # prueba rápida
@@ -373,7 +376,7 @@ uv run python -m optimizacion.juez optimizacion/resultados/baseline-<fecha>.json
 ```
 
 El modelo juez se elige con `JUEZ_PROVEEDOR` / `JUEZ_MODELO` (por defecto Groq
-`llama-3.3-70b-versatile`). La dimensión `estilo_docente` usa una rúbrica genérica hasta contar con
+`openai/gpt-oss-120b`). La dimensión `estilo_docente` usa una rúbrica genérica hasta contar con
 material de referencia de los docentes.
 
 ### Optimización del prompt con DSPy GEPA (Etapa 2)
@@ -449,6 +452,11 @@ Material complementario para entender el diseño, las decisiones y los resultado
 - Verificar permisos de escritura en la carpeta `app/`.
 - Si se configuró `QDRANT_URL`, verificar también `QDRANT_KEY`.
 
+**`model_not_found` / `The model ... does not exist`**
+- Groq cambia los modelos del plan gratuito. Listá los disponibles para tus keys y probalos con
+  `uv run python -m optimizacion.modelos --probar`, y configurá otro en `app/.env` (`LLM_MODELO` para el
+  generador, que debe aceptar imágenes; `JUEZ_MODELO` para el juez).
+
 **El LLM responde "sin cuota"**
 - La cuota de Groq se resetea diariamente. Esperar, o cargar varias keys en `GROQ_API_KEYS` para que se roten solas (pipeline, juez y GEPA). Una key con límite diario queda en pausa 1 hora (`GROQ_COOLDOWN_DIARIO_S`) y una con límite por minuto, 60 s (`GROQ_COOLDOWN_MINUTO_S`).
 - El sistema bloquea automáticamente nuevas llamadas por 5 minutos tras detectar cuota agotada (configurable con `LLM_QUOTA_BLOCK_SECONDS`).
@@ -457,7 +465,7 @@ Material complementario para entender el diseño, las decisiones y los resultado
 - Verificar que los PDFs estén en `data/pdf/` o `app/pdf/` y que Qdrant tenga datos (`/api/status` muestra `n_temas > 0`).
 - **UNI debe haber cargado** (ver arriba): sin UNI no se indexan imágenes.
 - Si la respuesta sale solo en texto pese a haber imágenes relevantes, bajá `IMG_RERANK_UMBRAL` (por defecto `0.35`).
-- Tesseract y Poppler deben estar instalados para la extracción.
+- Sin Tesseract las imágenes se indexan sin texto OCR (afecta poco la búsqueda).
 
 ---
 

@@ -25,7 +25,7 @@ from .claves import crear_chat_groq
 from .classifier import ClasificadorSemantico
 from .config import (
     COLLECTION_CHUNKS, COLLECTION_IMAGENES, DIRECTORIO_IMAGENES, DIRECTORIO_PDFS,
-    FEATURES_DISCRIMINATORIAS, PROMPTS_OPTIMIZADOS, PROMPTS_OPTIMIZADOS_PATH,
+    FEATURES_DISCRIMINATORIAS, LLM_MODELO, PROMPTS_OPTIMIZADOS, PROMPTS_OPTIMIZADOS_PATH,
     QDRANT_PATH, SIMILARITY_THRESHOLD, TRAZAS_DIR, TRAZAS_HABILITADAS,
     _safe, normalizar,
 )
@@ -111,8 +111,8 @@ class AsistenteHistologiaQdrant:
         print("✅ Todos los componentes inicializados")
 
     def _init_modelos(self):
-        self.llm = crear_chat_groq("meta-llama/llama-4-scout-17b-16e-instruct", temperature=0, max_retries=1)
-        print("✅ Groq inicializado")
+        self.llm = crear_chat_groq(LLM_MODELO, temperature=0, max_retries=1)
+        print(f"✅ Groq inicializado ({LLM_MODELO})")
 
         self.embeddings = HuggingFaceEmbeddings(
             model_name="sentence-transformers/all-MiniLM-L6-v2",
