@@ -48,6 +48,7 @@ from optimizacion.juez import (  # noqa: E402  (carga app/.env)
     DIMENSIONES, MODELOS_POR_DEFECTO, PESOS, RUBRICA, _leer_jsonl, mensaje_juez,
     parsear_veredicto, puntaje_global,
 )
+from src.claves import RotadorClaves  # noqa: E402
 from src.config import normalizar  # noqa: E402
 from src.prompts import CLAVE_RESPUESTA_TEXTO, instruccion_texto_default  # noqa: E402
 
@@ -62,6 +63,33 @@ MODELO_TAREA = "groq/meta-llama/llama-4-scout-17b-16e-instruct"
 MODELO_REFLEXION = "groq/llama-3.3-70b-versatile"
 # Mismo truncado que _build_content_parts en producción.
 MAX_CONTEXTO = 4000
+
+
+# ── Modelos ───────────────────────────────────────────────────────────────────
+
+class LMRotativo(dspy.LM):
+    """dspy.LM que rota las keys de Groq (GROQ_API_KEYS) ante límites de uso."""
+
+    def __init__(self, modelo: str, rotador: RotadorClaves, **kwargs):
+        super().__init__(modelo, **kwargs)
+        self.rotador = rotador
+
+    def __call__(self, prompt=None, *, messages=None, **kwargs):
+        return self.rotador.ejecutar(
+            lambda clave: super(LMRotativo, self).__call__(prompt, messages=messages, api_key=clave, **kwargs))
+
+    async def acall(self, prompt=None, *, messages=None, **kwargs):
+        return await self.rotador.aejecutar(
+            lambda clave: super(LMRotativo, self).acall(prompt, messages=messages, api_key=clave, **kwargs))
+
+
+def crear_lm(modelo: str, rotador: Optional[RotadorClaves] = None, **kwargs) -> "dspy.LM":
+    """Con varias keys de Groq rota entre ellas; si no, un dspy.LM común."""
+    if modelo.startswith("groq/") and rotador is not None and len(rotador) > 1:
+        # Pocos reintentos por key: ante un 429 conviene pasar a la siguiente.
+        kwargs["num_retries"] = min(kwargs.get("num_retries", 1), 1)
+        return LMRotativo(modelo, rotador, **kwargs)
+    return dspy.LM(modelo, **kwargs)
 
 
 # ── Programa ──────────────────────────────────────────────────────────────────
@@ -265,10 +293,13 @@ def main() -> int:
         print("ℹ️ Sin --ejemplos-docente: se optimiza contra la respuesta de referencia del manual.")
 
     modelo_juez = args.modelo_juez or _modelo_juez_por_defecto()
-    lm_tarea = dspy.LM(args.modelo, temperature=0.0, max_tokens=2048, num_retries=8)
-    lm_juez = dspy.LM(modelo_juez, temperature=0.0, max_tokens=2048, num_retries=8)
-    lm_reflexion = dspy.LM(args.modelo_reflexion, temperature=args.reflexion_temperatura,
-                           max_tokens=8192, num_retries=8)
+    rotador = RotadorClaves.desde_entorno()
+    if len(rotador) > 1:
+        print(f"🔑 Rotación de keys de Groq: {len(rotador)} keys")
+    lm_tarea = crear_lm(args.modelo, rotador, temperature=0.0, max_tokens=2048, num_retries=8)
+    lm_juez = crear_lm(modelo_juez, rotador, temperature=0.0, max_tokens=2048, num_retries=8)
+    lm_reflexion = crear_lm(args.modelo_reflexion, rotador, temperature=args.reflexion_temperatura,
+                            max_tokens=8192, num_retries=8)
     dspy.configure(lm=lm_tarea)
     metrica = crear_metrica(lm_juez)
     print(f"🤖 Tarea: {args.modelo} | Juez: {modelo_juez} | Reflexión: {args.modelo_reflexion}")
