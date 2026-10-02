@@ -141,16 +141,36 @@ class ChatRotativo:
         return await self.rotador.aejecutar(lambda clave: self._modelos[clave].ainvoke(messages, **kwargs))
 
 
+def opciones_razonamiento(modelo: str) -> dict:
+    """
+    Qwen en Groq razona antes de responder ("thinking"). Para el RAG no hace
+    falta y gasta cuota: por defecto se desactiva (LLM_REASONING_EFFORT=none) y,
+    si igual razona, el razonamiento no se incluye en la respuesta
+    (LLM_REASONING_FORMAT=hidden). Un valor vacío no envía el parámetro.
+    """
+    if "qwen" not in modelo.lower():  # "qwen/..." (LangChain) o "groq/qwen/..." (DSPy)
+        return {}
+    opciones = {}
+    formato = os.getenv("LLM_REASONING_FORMAT", "hidden").strip()
+    esfuerzo = os.getenv("LLM_REASONING_EFFORT", "none").strip()
+    if formato:
+        opciones["reasoning_format"] = formato
+    if esfuerzo:
+        opciones["reasoning_effort"] = esfuerzo
+    return opciones
+
+
 def crear_chat_groq(modelo: str, temperature: float = 0, max_retries: int = 1):
     """ChatGroq con rotación de keys (GROQ_API_KEYS) o una sola key (GROQ_API_KEY)."""
     from langchain_groq import ChatGroq
 
+    opciones = opciones_razonamiento(modelo)
+
+    def fabrica(clave):
+        return ChatGroq(model=modelo, api_key=clave, temperature=temperature, max_retries=max_retries, **opciones)
+
     rotador = RotadorClaves.desde_entorno()
     if len(rotador) <= 1:
-        clave = rotador.claves[0] if rotador.claves else None
-        return ChatGroq(model=modelo, api_key=clave, temperature=temperature, max_retries=max_retries)
+        return fabrica(rotador.claves[0] if rotador.claves else None)
     print(f"🔑 Rotación de keys de Groq: {len(rotador)} keys")
-    return ChatRotativo(
-        lambda clave: ChatGroq(model=modelo, api_key=clave, temperature=temperature, max_retries=max_retries),
-        rotador,
-    )
+    return ChatRotativo(fabrica, rotador)

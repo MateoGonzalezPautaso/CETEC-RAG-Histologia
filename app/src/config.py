@@ -56,6 +56,12 @@ if _TRAZAS_DIR_ENV:
 else:
     TRAZAS_DIR = os.path.join(_BASE, "trazas")
 
+# ── Modelo generador (Groq) ───────────────────────────────────────────────────
+# Groq retiró Llama-4-Scout del plan gratuito (17/07/2026). Qwen 3.8 27B es su
+# reemplazo multimodal (texto + imagen). Ver los modelos disponibles con:
+#   uv run python -m optimizacion.modelos
+LLM_MODELO = (os.getenv("LLM_MODELO") or "qwen/qwen3.8-27b").strip()
+
 # ── Prompts optimizados con DSPy GEPA (Etapa 2) ───────────────────────────────
 # Desactivado por defecto: el pipeline usa los prompts originales hasta que un
 # prompt optimizado se valide contra el baseline.

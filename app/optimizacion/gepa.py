@@ -48,8 +48,8 @@ from optimizacion.juez import (  # noqa: E402  (carga app/.env)
     DIMENSIONES, MODELOS_POR_DEFECTO, PESOS, RUBRICA, _leer_jsonl, mensaje_juez,
     parsear_veredicto, puntaje_global,
 )
-from src.claves import RotadorClaves  # noqa: E402
-from src.config import normalizar  # noqa: E402
+from src.claves import RotadorClaves, opciones_razonamiento  # noqa: E402
+from src.config import LLM_MODELO, normalizar  # noqa: E402
 from src.prompts import CLAVE_RESPUESTA_TEXTO, instruccion_texto_default  # noqa: E402
 
 try:
@@ -58,9 +58,10 @@ except ImportError:  # pragma: no cover - mensaje para quien no instaló el grup
     print("❌ Falta DSPy. Instalalo con: uv sync --group optim")
     raise
 
-# El generador de producción (src/assistant.py) vía LiteLLM.
-MODELO_TAREA = "groq/meta-llama/llama-4-scout-17b-16e-instruct"
-MODELO_REFLEXION = "groq/llama-3.3-70b-versatile"
+# El generador de producción (src/assistant.py, LLM_MODELO) y un modelo más
+# grande para proponer instrucciones.
+MODELO_TAREA = f"groq/{LLM_MODELO}"
+MODELO_REFLEXION = "groq/openai/gpt-oss-120b"
 # Mismo truncado que _build_content_parts en producción.
 MAX_CONTEXTO = 4000
 
@@ -85,6 +86,8 @@ class LMRotativo(dspy.LM):
 
 def crear_lm(modelo: str, rotador: Optional[RotadorClaves] = None, **kwargs) -> "dspy.LM":
     """Con varias keys de Groq rota entre ellas; si no, un dspy.LM común."""
+    if modelo.startswith("groq/"):
+        kwargs = {**opciones_razonamiento(modelo), **kwargs}
     if modelo.startswith("groq/") and rotador is not None and len(rotador) > 1:
         # Pocos reintentos por key: ante un 429 conviene pasar a la siguiente.
         kwargs["num_retries"] = min(kwargs.get("num_retries", 1), 1)

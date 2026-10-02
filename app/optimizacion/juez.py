@@ -15,8 +15,9 @@ Las justificaciones se guardan como `feedback`: es el texto que GEPA usa para
 proponer mejoras de prompt.
 
 El modelo juez se elige con JUEZ_PROVEEDOR (groq | openai) y JUEZ_MODELO. Por
-defecto, Groq llama-3.3-70b-versatile: modelos chicos devuelven JSON inválido
-(ver Informe Sprint 1). Si se agota la cuota, se corta y se retoma volviendo a
+defecto, Groq openai/gpt-oss-120b (llama-3.3-70b-versatile salió del plan
+gratuito el 16/08/2026): modelos chicos devuelven JSON inválido (ver Informe
+Sprint 1). Si se agota la cuota, se corta y se retoma volviendo a
 correr el mismo comando.
 
 Uso (desde app/; no necesita el servidor ni los modelos de visión):
@@ -49,7 +50,7 @@ DIMENSIONES = ["correccion", "fidelidad", "notacion", "estilo_docente"]
 # (semana 7 del plan: precisión vs. clonación de estilo).
 PESOS = {"correccion": 0.35, "fidelidad": 0.30, "notacion": 0.20, "estilo_docente": 0.15}
 
-MODELOS_POR_DEFECTO = {"groq": "llama-3.3-70b-versatile", "openai": "gpt-4o-mini"}
+MODELOS_POR_DEFECTO = {"groq": "openai/gpt-oss-120b", "openai": "gpt-4o-mini"}
 
 RUBRICA = """Sos un docente de Histología de la Facultad de Ingeniería de la UBA evaluando
 las respuestas de un asistente para estudiantes. Evaluá la RESPUESTA DEL SISTEMA en
