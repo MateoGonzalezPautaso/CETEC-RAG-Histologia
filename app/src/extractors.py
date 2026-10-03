@@ -356,10 +356,29 @@ class ExtractorEntidades:
             texto_resp = re.sub(r"```json\s*|\s*```", "", resp.content.strip())
             resultado = json.loads(texto_resp)
             reglas = self._extraer_reglas(texto)
+            texto_norm = _normalizar(texto)
+            # Nombres que las reglas ya ubicaron en otra categoría (p. ej.
+            # "arteria muscular" es un órgano, no un tejido).
+            ya_clasificados = {_normalizar(v) for k in ("dominios", "organos", "celulas", "temas")
+                               for v in reglas.get(k, [])}
+
+            def anclados(items):
+                # Solo entidades que están en el texto: el LLM a veces agrega
+                # términos inferidos ("tejido conectivo" para una arteria) que
+                # la búsqueda por keywords puntúa como coincidencia exacta y
+                # traen chunks de otros temas. Así la recuperación no depende
+                # de qué tan "creativo" sea el modelo generador.
+                salida = []
+                for item in items[:3]:
+                    item_norm = _normalizar(item).strip()
+                    if item_norm and item_norm in texto_norm and item_norm not in ya_clasificados:
+                        salida.append(str(item).lower())
+                return salida
+
             return {
-                "tejidos": self._merge_unicos([t.lower() for t in resultado.get("tejidos", [])[:3]], reglas.get("tejidos", [])),
-                "estructuras": self._merge_unicos([e.lower() for e in resultado.get("estructuras", [])[:3]], reglas.get("estructuras", [])),
-                "tinciones": self._merge_unicos([t.lower() for t in resultado.get("tinciones", [])[:3]], reglas.get("tinciones", [])),
+                "tejidos": self._merge_unicos(anclados(resultado.get("tejidos", [])), reglas.get("tejidos", [])),
+                "estructuras": self._merge_unicos(anclados(resultado.get("estructuras", [])), reglas.get("estructuras", [])),
+                "tinciones": self._merge_unicos(anclados(resultado.get("tinciones", [])), reglas.get("tinciones", [])),
                 "dominios": reglas.get("dominios", []),
                 "organos": reglas.get("organos", []),
                 "celulas": reglas.get("celulas", []),
