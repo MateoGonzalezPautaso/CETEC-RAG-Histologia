@@ -233,11 +233,15 @@ class ExtractorTemario:
         self.temas: List[str] = []
 
     @staticmethod
-    def _muestra_representativa(texto: str, presupuesto: int = 24000, ventanas: int = 6) -> str:
+    def _muestra_representativa(texto: str, presupuesto: int = 12000, ventanas: int = 6) -> str:
         """
         Sample evenly-spaced windows across the whole corpus instead of only the
         first N characters, so the syllabus reflects the entire manual (not just
         the opening pages of the first PDF).
+
+        12000 caracteres son ~4000 tokens: entra en el límite de tokens de
+        entrada por minuto del plan gratuito de Groq (7000 para Qwen 3.8 27B).
+        Con 24000 (~7800 tokens) la llamada se rechazaba con un 413.
         """
         if len(texto) <= presupuesto:
             return texto
