@@ -928,12 +928,23 @@ class AsistenteHistologiaQdrant:
         seccion_comp = f"\n\n**ANÁLISIS COMPARATIVO:**\n{analisis_comp_str[:2000]}" if analisis_comp_str else ""
         seccion_est = f"\n\n**ESTRUCTURA IDENTIFICADA:** {estructura_str}" if estructura_str else ""
 
+        if es_solo_texto:
+            # En modo texto el LLM recibe solo la consulta y las secciones del
+            # manual, lo mismo que el programa que optimiza GEPA. TÉRMINOS,
+            # ENTIDADES y TEMA son artefactos de la búsqueda generados por el
+            # LLM: con Qwen 3.8 los tomaba como lista de lo que debía aparecer
+            # y respondía que "el manual no contiene" información que sí estaba.
+            metadatos_busqueda = ""
+        else:
+            metadatos_busqueda = (
+                f"**TÉRMINOS:** {_safe(state.get('terminos_busqueda'))[:300]}\n\n"
+                f"**ENTIDADES:** {json.dumps(state.get('entidades_consulta', {}), ensure_ascii=False)}\n\n"
+                f"**TEMA:** {_safe(state.get('tema_encontrado'), 'N/A')}\n\n"
+                f"**ANÁLISIS VISUAL:**\n{analisis_visual_str[:800]}\n\n"
+            )
         content_parts.append({"type": "text", "text": (
             f"**CONSULTA:** {state['consulta_texto']}\n\n"
-            f"**TÉRMINOS:** {_safe(state.get('terminos_busqueda'))[:300]}\n\n"
-            f"**ENTIDADES:** {json.dumps(state.get('entidades_consulta', {}), ensure_ascii=False)}\n\n"
-            f"**TEMA:** {_safe(state.get('tema_encontrado'), 'N/A')}\n\n"
-            f"**ANÁLISIS VISUAL:**\n{analisis_visual_str[:800]}\n\n"
+            f"{metadatos_busqueda}"
             f"**SECCIONES DEL MANUAL:**\n{ctx_docs}"
             f"{seccion_comp}{seccion_est}\n\n"
             "Responde EXCLUSIVAMENTE con el contenido del manual e imágenes de referencia."
