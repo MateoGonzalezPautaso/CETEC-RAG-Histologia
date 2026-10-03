@@ -155,6 +155,20 @@ REGLAS_ENTIDADES = {
         "testiculo": ["testiculo", "testicular", "seminifero", "seminiferos",
                       "sertoli", "leydig", "espermatogonia", "espermatide",
                       "peritubular", "mioide"],
+        # arch2.pdf (prácticas 11 a 15). Sin estos dominios sus chunks pasaban
+        # el filtro de dominio de la búsqueda por keywords de cualquier consulta.
+        # Ninguno de estos patrones aparece en arch3.pdf ni arch4.pdf.
+        "cartilago": ["cartilag", "condrocito", "condroblasto", "pericondrio"],
+        "tejido oseo": ["hueso", "oseo", "osea", "osteocito", "osteoblasto", "osteoclasto",
+                        "osteona", "havers", "volkmann", "volckmann", "periostio",
+                        "endostio", "trabecula", "osificacion"],
+        # Sin la frase genérica "tejido muscular": "el tejido muscular liso de la
+        # túnica media" es una consulta de arterias, no de la práctica 13.
+        "tejido muscular": ["sarcomera", "miofibrilla", "estriado", "miocito",
+                            "sarcoplasm", "musculo esqueletico", "musculo cardiaco"],
+        "tejido nervioso": ["tejido nervioso", "neurona", "neuroglia", "astrocito",
+                            "oligodendrocito", "microglia", "ependim", "axon", "dendrita",
+                            "sinapsis", "schwann", "purkinje", "nissl"],
     },
     "organos": {
         "arteria muscular": ["arteria muscular"],
