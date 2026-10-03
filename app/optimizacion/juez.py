@@ -201,6 +201,12 @@ def resumir(juicios: List[dict]) -> dict:
     }
 
 
+def _ultimo_por_indice(registros: List[dict]) -> List[dict]:
+    """Un registro por pregunta: el baseline agrega al final los reintentos de
+    preguntas que habían fallado, así que gana el último."""
+    return sorted({r["indice"]: r for r in registros}.values(), key=lambda r: r["indice"])
+
+
 def _leer_jsonl(ruta: Path) -> List[dict]:
     if not ruta.exists():
         return []
@@ -215,7 +221,7 @@ def _leer_jsonl(ruta: Path) -> List[dict]:
 
 
 async def correr(entrada: Path, limit: int, proveedor: Optional[str], modelo: Optional[str]) -> int:
-    registros = sorted(_leer_jsonl(entrada), key=lambda r: r["indice"])
+    registros = _ultimo_por_indice(_leer_jsonl(entrada))
     if limit > 0:
         registros = registros[:limit]
     salida = entrada.with_name(entrada.stem + "-juez.jsonl")
