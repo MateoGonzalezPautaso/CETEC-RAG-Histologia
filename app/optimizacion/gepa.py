@@ -45,8 +45,8 @@ APP_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(APP_DIR))
 
 from optimizacion.juez import (  # noqa: E402  (carga app/.env)
-    DIMENSIONES, MODELOS_POR_DEFECTO, PESOS, RUBRICA, _leer_jsonl, mensaje_juez,
-    parsear_veredicto, puntaje_global,
+    DIMENSIONES, MODELOS_POR_DEFECTO, PESOS, RUBRICA, _leer_jsonl, _ultimo_por_indice,
+    mensaje_juez, parsear_veredicto, puntaje_global,
 )
 from src.claves import RotadorClaves, opciones_razonamiento  # noqa: E402
 from src.config import LLM_MODELO, normalizar  # noqa: E402
@@ -280,7 +280,7 @@ def main() -> int:
     parser.add_argument("--dry-run", action="store_true", help="Solo prueba programa + juez sobre un ejemplo")
     args = parser.parse_args()
 
-    registros = _leer_jsonl(args.baseline.resolve())
+    registros = _ultimo_por_indice(_leer_jsonl(args.baseline.resolve()))
     if not registros:
         print(f"❌ No hay registros en {args.baseline}")
         return 1

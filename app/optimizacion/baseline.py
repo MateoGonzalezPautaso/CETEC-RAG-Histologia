@@ -9,7 +9,8 @@ Cada pregunta usa una sesión propia: sin historial de las anteriores, la
 reescritura de la consulta no se contamina con otras preguntas del set.
 
 Si el modelo se queda sin cuota, la corrida se corta sin registrar la pregunta
-fallida; volver a correr con el mismo --salida retoma donde quedó.
+fallida; volver a correr con el mismo --salida retoma donde quedó y reintenta
+las preguntas que habían terminado con error.
 
 Uso (desde app/, con el servidor DETENIDO: Qdrant local no admite dos procesos):
     uv run python -m optimizacion.baseline                  # golden set completo
@@ -101,9 +102,14 @@ def resumir(registros: List[dict]) -> dict:
 async def correr(limit: int, salida: Path) -> int:
     golden = GOLDEN_SET[:limit] if limit > 0 else GOLDEN_SET
     hechos = _cargar_hechos(salida)
-    pendientes = [(i, item) for i, item in enumerate(golden) if i not in hechos]
+    # Las preguntas que terminaron con error (p. ej. un límite por minuto de
+    # Groq tras agotar los reintentos) se vuelven a correr; el registro nuevo se
+    # agrega al final y reemplaza al anterior al cargar (_cargar_hechos).
+    pendientes = [(i, item) for i, item in enumerate(golden)
+                  if i not in hechos or hechos[i]["traza"].get("error")]
+    n_reintento = sum(1 for i, _ in pendientes if i in hechos)
     print(f"📋 Golden set: {len(golden)} preguntas | ya hechas: {len(golden) - len(pendientes)} | "
-          f"pendientes: {len(pendientes)}")
+          f"pendientes: {len(pendientes)}" + (f" ({n_reintento} con error, se reintentan)" if n_reintento else ""))
     print(f"💾 Salida: {salida}")
     if not pendientes:
         print("✅ Nada pendiente.")
