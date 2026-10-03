@@ -170,10 +170,13 @@ GOLDEN_SET = [
         "paginas_esperadas": [10],
     },
     {
+        # El manual no explica la diferencia: solo nombra ambos conductos. La
+        # referencia anterior traía información de fuera del manual; ahora la
+        # pregunta controla que el sistema admita lo que el manual no dice.
         "question": "Que diferencia hay entre el conducto de Havers y el de Volkmann?",
-        "ground_truth": "El conducto de Havers corre longitudinalmente en el centro de la osteona. El conducto de Volkmann corre transversalmente conectando osteonas y el periostio.",
+        "ground_truth": "El manual no describe la diferencia entre ambos conductos: solo menciona el conducto de Havers y el conducto de Volckmann como estructuras del hueso compacto que se deben identificar en la practica 12, y los senala en el modelo de hueso compacto (Imagen 12.7).",
         "fuente_esperada": "arch2.pdf",
-        "paginas_esperadas": [16],
+        "paginas_esperadas": [9, 16],
     },
     {
         "question": "Que funcion tienen los osteoclastos y donde se ubican?",
@@ -227,7 +230,8 @@ GOLDEN_SET = [
         "question": "Que son las celulas ependimarias y donde se ubican?",
         "ground_truth": "Las celulas ependimarias revisten el canal ependimario y el conducto central de la medula espinal. Son cubicas o cilindricas.",
         "fuente_esperada": "arch2.pdf",
-        "paginas_esperadas": [35],
+        # La descripción está en las páginas 30 y 31; la 35 es la imagen.
+        "paginas_esperadas": [30, 31, 35],
     },
 ]
 
