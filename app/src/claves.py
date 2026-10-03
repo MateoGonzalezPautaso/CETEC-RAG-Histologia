@@ -21,6 +21,12 @@ from typing import Callable, List, Optional
 
 
 def _es_limite(error: Exception) -> bool:
+    # 413 "Request too large": el pedido excede el límite por minuto de
+    # cualquier key; rotar no sirve y dejaría todas las keys en pausa.
+    if 413 in (getattr(error, "status_code", None), getattr(error, "status", None)):
+        return False
+    if "request too large" in str(error).lower():
+        return False
     # status_code: SDK de Groq/LangChain; status: errores de DSPy (LMRateLimitError).
     if 429 in (getattr(error, "status_code", None), getattr(error, "status", None)):
         return True
