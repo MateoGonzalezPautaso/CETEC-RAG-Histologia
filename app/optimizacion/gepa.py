@@ -84,8 +84,37 @@ def cuota_agotada() -> Optional[str]:
     return _ESTADO_CUOTA["agotada"]
 
 
+def _es_transitorio(error: Exception) -> bool:
+    """Errores de red o del servidor que conviene reintentar (no son límites de uso)."""
+    if getattr(error, "status", None) in (408, 409, 500, 502, 503, 504, 529):
+        return True
+    nombre = type(error).__name__.lower()
+    return any(t in nombre for t in ("timeout", "servererror", "transport", "connection", "unavailable"))
+
+
+def _normalizar_salidas(salidas):
+    """
+    Una respuesta que sale del caché de DSPy viene como AttributeDict (subclase
+    de dict) cuando el modelo razona (gpt-oss). GEPA valida la reflexión con
+    type(x) == dict y la rechaza ("Unexpected output type from the base LM"):
+    al retomar una corrida desde el caché ninguna reflexión funcionaba.
+    """
+    if not isinstance(salidas, list):
+        return salidas
+    return [dict(o) if isinstance(o, dict) else str(o) if isinstance(o, str) else o for o in salidas]
+
+
 class LMRotativo(dspy.LM):
-    """dspy.LM que rota las keys de Groq (GROQ_API_KEYS) y espera ante límites por minuto."""
+    """
+    dspy.LM de Groq que rota las keys (GROQ_API_KEYS), espera ante límites por
+    minuto y marca la corrida si se agota la cuota.
+
+    Los 429 los resuelve el rotador: DSPy no reintenta por su cuenta
+    (num_retries=0), porque dormiría el "try again in" de Groq, que con la cuota
+    diaria agotada son minutos por llamada y la corrida parecería colgada.
+    """
+
+    INTENTOS_TRANSITORIOS = 3
 
     def __init__(self, modelo: str, rotador: RotadorClaves, **kwargs):
         super().__init__(modelo, **kwargs)
@@ -100,31 +129,38 @@ class LMRotativo(dspy.LM):
         raise error
 
     def __call__(self, prompt=None, *, messages=None, **kwargs):
-        if _ESTADO_CUOTA["agotada"]:
-            raise CuotaAgotada(_ESTADO_CUOTA["agotada"])
-        try:
-            return self.rotador.ejecutar(
-                lambda clave: super(LMRotativo, self).__call__(prompt, messages=messages, api_key=clave, **kwargs))
-        except Exception as e:
-            self._guardia(e)
+        for intento in range(self.INTENTOS_TRANSITORIOS):
+            if _ESTADO_CUOTA["agotada"]:
+                raise CuotaAgotada(_ESTADO_CUOTA["agotada"])
+            try:
+                return _normalizar_salidas(self.rotador.ejecutar(
+                    lambda clave: super(LMRotativo, self).__call__(prompt, messages=messages, api_key=clave, **kwargs)))
+            except Exception as e:
+                if not _es_limite(e) and _es_transitorio(e) and intento < self.INTENTOS_TRANSITORIOS - 1:
+                    time.sleep(3 * 2 ** intento)
+                    continue
+                self._guardia(e)
 
     async def acall(self, prompt=None, *, messages=None, **kwargs):
-        if _ESTADO_CUOTA["agotada"]:
-            raise CuotaAgotada(_ESTADO_CUOTA["agotada"])
-        try:
-            return await self.rotador.aejecutar(
-                lambda clave: super(LMRotativo, self).acall(prompt, messages=messages, api_key=clave, **kwargs))
-        except Exception as e:
-            self._guardia(e)
+        import asyncio
+
+        for intento in range(self.INTENTOS_TRANSITORIOS):
+            if _ESTADO_CUOTA["agotada"]:
+                raise CuotaAgotada(_ESTADO_CUOTA["agotada"])
+            try:
+                return _normalizar_salidas(await self.rotador.aejecutar(
+                    lambda clave: super(LMRotativo, self).acall(prompt, messages=messages, api_key=clave, **kwargs)))
+            except Exception as e:
+                if not _es_limite(e) and _es_transitorio(e) and intento < self.INTENTOS_TRANSITORIOS - 1:
+                    await asyncio.sleep(3 * 2 ** intento)
+                    continue
+                self._guardia(e)
 
 
 def crear_lm(modelo: str, rotador: Optional[RotadorClaves] = None, **kwargs) -> "dspy.LM":
     """LM de Groq con rotación de keys, espera ante límites por minuto y guardia de cuota."""
     if modelo.startswith("groq/") and rotador is not None and len(rotador):
-        kwargs = {**opciones_razonamiento(modelo), **kwargs}
-        # Los 429 los maneja el rotador (espera lo que indica Groq o cambia de
-        # key); los reintentos internos quedan para errores transitorios.
-        kwargs["num_retries"] = min(kwargs.get("num_retries", 2), 2)
+        kwargs = {**opciones_razonamiento(modelo), **kwargs, "num_retries": 0}
         return LMRotativo(modelo, rotador, **kwargs)
     return dspy.LM(modelo, **kwargs)
 
