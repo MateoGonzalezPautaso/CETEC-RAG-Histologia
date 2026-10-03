@@ -48,7 +48,7 @@ from optimizacion.juez import (  # noqa: E402  (carga app/.env)
     DIMENSIONES, MODELOS_POR_DEFECTO, PESOS, RUBRICA, _leer_jsonl, _ultimo_por_indice,
     mensaje_juez, parsear_veredicto, puntaje_global,
 )
-from src.claves import RotadorClaves, opciones_razonamiento  # noqa: E402
+from src.claves import RotadorClaves, _es_limite, opciones_razonamiento  # noqa: E402
 from src.config import LLM_MODELO, normalizar  # noqa: E402
 from src.prompts import CLAVE_RESPUESTA_TEXTO, instruccion_texto_default  # noqa: E402
 
@@ -68,29 +68,63 @@ MAX_CONTEXTO = 4000
 
 # ── Modelos ───────────────────────────────────────────────────────────────────
 
+class CuotaAgotada(RuntimeError):
+    """Una llamada al LM falló por límite de uso aun después de rotar keys y esperar."""
+
+
+# GEPA y dspy.Evaluate convierten cualquier excepción del programa o de la
+# métrica en puntaje 0 y siguen. Si se agota la cuota a mitad de camino, la
+# optimización seguiría con ceros y el prompt "optimizado" no valdría nada.
+# Por eso el primer límite de uso que no se pudo resolver marca la corrida, las
+# llamadas siguientes fallan sin ir a la API y main() descarta el resultado.
+_ESTADO_CUOTA = {"agotada": None}
+
+
+def cuota_agotada() -> Optional[str]:
+    return _ESTADO_CUOTA["agotada"]
+
+
 class LMRotativo(dspy.LM):
-    """dspy.LM que rota las keys de Groq (GROQ_API_KEYS) ante límites de uso."""
+    """dspy.LM que rota las keys de Groq (GROQ_API_KEYS) y espera ante límites por minuto."""
 
     def __init__(self, modelo: str, rotador: RotadorClaves, **kwargs):
         super().__init__(modelo, **kwargs)
         self.rotador = rotador
 
+    def _guardia(self, error: Exception):
+        if _es_limite(error):
+            if not _ESTADO_CUOTA["agotada"]:
+                print(f"\n⛔ Límite de uso sin resolver en {self.model}: {str(error)[:200]}")
+            _ESTADO_CUOTA["agotada"] = _ESTADO_CUOTA["agotada"] or f"{self.model}: {str(error)[:300]}"
+            raise CuotaAgotada(str(error)) from error
+        raise error
+
     def __call__(self, prompt=None, *, messages=None, **kwargs):
-        return self.rotador.ejecutar(
-            lambda clave: super(LMRotativo, self).__call__(prompt, messages=messages, api_key=clave, **kwargs))
+        if _ESTADO_CUOTA["agotada"]:
+            raise CuotaAgotada(_ESTADO_CUOTA["agotada"])
+        try:
+            return self.rotador.ejecutar(
+                lambda clave: super(LMRotativo, self).__call__(prompt, messages=messages, api_key=clave, **kwargs))
+        except Exception as e:
+            self._guardia(e)
 
     async def acall(self, prompt=None, *, messages=None, **kwargs):
-        return await self.rotador.aejecutar(
-            lambda clave: super(LMRotativo, self).acall(prompt, messages=messages, api_key=clave, **kwargs))
+        if _ESTADO_CUOTA["agotada"]:
+            raise CuotaAgotada(_ESTADO_CUOTA["agotada"])
+        try:
+            return await self.rotador.aejecutar(
+                lambda clave: super(LMRotativo, self).acall(prompt, messages=messages, api_key=clave, **kwargs))
+        except Exception as e:
+            self._guardia(e)
 
 
 def crear_lm(modelo: str, rotador: Optional[RotadorClaves] = None, **kwargs) -> "dspy.LM":
-    """Con varias keys de Groq rota entre ellas; si no, un dspy.LM común."""
-    if modelo.startswith("groq/"):
+    """LM de Groq con rotación de keys, espera ante límites por minuto y guardia de cuota."""
+    if modelo.startswith("groq/") and rotador is not None and len(rotador):
         kwargs = {**opciones_razonamiento(modelo), **kwargs}
-    if modelo.startswith("groq/") and rotador is not None and len(rotador) > 1:
-        # Pocos reintentos por key: ante un 429 conviene pasar a la siguiente.
-        kwargs["num_retries"] = min(kwargs.get("num_retries", 1), 1)
+        # Los 429 los maneja el rotador (espera lo que indica Groq o cambia de
+        # key); los reintentos internos quedan para errores transitorios.
+        kwargs["num_retries"] = min(kwargs.get("num_retries", 2), 2)
         return LMRotativo(modelo, rotador, **kwargs)
     return dspy.LM(modelo, **kwargs)
 
@@ -262,6 +296,19 @@ def _modelo_juez_por_defecto() -> str:
     return f"{proveedor}/{modelo}"
 
 
+def _abortar_por_cuota(salida: Path) -> int:
+    print(
+        "\n⛔ Se agotó la cuota de Groq durante la optimización. El resultado NO se guardó: "
+        "las evaluaciones posteriores al corte valen 0 y el prompt no sería válido.\n"
+        f"   Motivo: {cuota_agotada()}\n"
+        "   Volvé a correr el mismo comando (sin --salida, o con una carpeta nueva) cuando se "
+        "renueve la cuota o con más keys en GROQ_API_KEYS: DSPy reutiliza desde su caché las "
+        "llamadas que ya se hicieron, así que retoma casi donde quedó.\n"
+        f"   Logs parciales: {salida}"
+    )
+    return 2
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Optimiza el prompt de respuesta con DSPy GEPA")
     parser.add_argument("baseline", type=Path, help="JSONL generado por optimizacion.baseline")
@@ -312,9 +359,13 @@ def main() -> int:
     if args.dry_run:
         ex = ejemplos[0]
         print(f"\n🧪 DRY RUN con #{ex.indice}: {ex.question}")
-        pred = semilla(question=ex.question, context=ex.context)
-        print(f"\n📝 Respuesta:\n{pred.response[:800]}")
-        resultado = metrica(ex, pred)
+        try:
+            pred = semilla(question=ex.question, context=ex.context)
+            print(f"\n📝 Respuesta:\n{pred.response[:800]}")
+            resultado = metrica(ex, pred)
+        except CuotaAgotada as e:
+            print(f"\n⛔ Sin cuota de Groq: {e}")
+            return 2
         print(f"\n⚖️  Puntaje: {resultado.score:.3f}\n{resultado.feedback}")
         print("\n✅ Dry run completo. Sacá --dry-run para optimizar.")
         return 0
@@ -340,11 +391,16 @@ def main() -> int:
     )
     optimizado = optimizador.compile(semilla, trainset=train, valset=val)
     duracion = time.time() - t0
+    if cuota_agotada():
+        return _abortar_por_cuota(salida)
     print(f"\n⏱️ GEPA terminó en {duracion / 60:.1f} min")
 
     # Puntajes en validación, con la misma métrica, de la semilla y del optimizado.
-    val_semilla, por_indice_semilla = evaluar(semilla, val, metrica)
-    val_optimizado, por_indice_opt = evaluar(optimizado, val, metrica)
+    try:
+        val_semilla, por_indice_semilla = evaluar(semilla, val, metrica)
+        val_optimizado, por_indice_opt = evaluar(optimizado, val, metrica)
+    except CuotaAgotada:
+        return _abortar_por_cuota(salida)
 
     resultado = {
         "metadata": {
