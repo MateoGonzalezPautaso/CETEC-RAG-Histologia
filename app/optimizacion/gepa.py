@@ -64,6 +64,10 @@ MODELO_TAREA = f"groq/{LLM_MODELO}"
 MODELO_REFLEXION = "groq/openai/gpt-oss-120b"
 # Mismo truncado que _build_content_parts en producción.
 MAX_CONTEXTO = 4000
+# Tope de salida del generador. Groq rechaza (sin reintento posible) los pedidos
+# cuyo max_tokens supera el límite de tokens de salida por minuto del modelo
+# (OTPM: 1000 para Qwen en el plan gratuito). Una respuesta ronda 300 tokens.
+MAX_TOKENS_TAREA = int(os.getenv("GEPA_MAX_TOKENS_TAREA", "900"))
 
 
 # ── Modelos ───────────────────────────────────────────────────────────────────
@@ -77,11 +81,18 @@ class CuotaAgotada(RuntimeError):
 # optimización seguiría con ceros y el prompt "optimizado" no valdría nada.
 # Por eso el primer límite de uso que no se pudo resolver marca la corrida, las
 # llamadas siguientes fallan sin ir a la API y main() descarta el resultado.
-_ESTADO_CUOTA = {"agotada": None}
+_ESTADO_CUOTA = {"agotada": None, "pedido_grande": False}
 
 
 def cuota_agotada() -> Optional[str]:
     return _ESTADO_CUOTA["agotada"]
+
+
+def _es_pedido_grande(error: Exception) -> bool:
+    """413 / "Request too large": el pedido excede un límite del modelo; fallaría siempre igual."""
+    if 413 in (getattr(error, "status_code", None), getattr(error, "status", None)):
+        return True
+    return "request too large" in str(error).lower()
 
 
 def _es_transitorio(error: Exception) -> bool:
@@ -121,9 +132,12 @@ class LMRotativo(dspy.LM):
         self.rotador = rotador
 
     def _guardia(self, error: Exception):
-        if _es_limite(error):
+        grande = _es_pedido_grande(error)
+        if grande or _es_limite(error):
+            _ESTADO_CUOTA["pedido_grande"] = _ESTADO_CUOTA["pedido_grande"] or grande
             if not _ESTADO_CUOTA["agotada"]:
-                print(f"\n⛔ Límite de uso sin resolver en {self.model}: {str(error)[:200]}")
+                causa = "Pedido rechazado por tamaño" if grande else "Límite de uso sin resolver"
+                print(f"\n⛔ {causa} en {self.model}: {str(error)[:200]}")
             _ESTADO_CUOTA["agotada"] = _ESTADO_CUOTA["agotada"] or f"{self.model}: {str(error)[:300]}"
             raise CuotaAgotada(str(error)) from error
         raise error
@@ -333,6 +347,16 @@ def _modelo_juez_por_defecto() -> str:
 
 
 def _abortar_por_cuota(salida: Path) -> int:
+    if _ESTADO_CUOTA["pedido_grande"]:
+        print(
+            "\n⛔ Groq rechazó un pedido por ser demasiado grande para el modelo. El resultado NO se "
+            "guardó.\n"
+            f"   Motivo: {cuota_agotada()}\n"
+            "   Si habla de output tokens (OTPM), bajá GEPA_MAX_TOKENS_TAREA en app/.env (o "
+            "--max-tokens-tarea). Si habla de tokens por minuto (TPM), el contexto es muy largo.\n"
+            f"   Logs parciales: {salida}"
+        )
+        return 2
     print(
         "\n⛔ Se agotó la cuota de Groq durante la optimización. El resultado NO se guardó: "
         "las evaluaciones posteriores al corte valen 0 y el prompt no sería válido.\n"
@@ -357,6 +381,8 @@ def main() -> int:
     parser.add_argument("--modelo", default=MODELO_TAREA, help="LM que genera las respuestas (LiteLLM)")
     parser.add_argument("--modelo-reflexion", default=MODELO_REFLEXION, help="LM que propone instrucciones")
     parser.add_argument("--modelo-juez", default=None, help="LM juez (default: JUEZ_PROVEEDOR/JUEZ_MODELO)")
+    parser.add_argument("--max-tokens-tarea", type=int, default=MAX_TOKENS_TAREA,
+                        help="Tope de tokens de la respuesta (debe quedar bajo el OTPM del modelo)")
     parser.add_argument("--reflexion-temperatura", type=float, default=1.0)
     parser.add_argument("--hilos", type=int, default=1, help="Evaluaciones en paralelo (1 = amigable con la cuota)")
     parser.add_argument("--salida", type=Path, default=None, help="Carpeta de salida (default: resultados/gepa-<fecha>)")
@@ -382,7 +408,8 @@ def main() -> int:
     rotador = RotadorClaves.desde_entorno()
     if len(rotador) > 1:
         print(f"🔑 Rotación de keys de Groq: {len(rotador)} keys")
-    lm_tarea = crear_lm(args.modelo, rotador, temperature=0.0, max_tokens=2048, num_retries=8)
+    lm_tarea = crear_lm(args.modelo, rotador, temperature=0.0, max_tokens=args.max_tokens_tarea,
+                        num_retries=8)
     lm_juez = crear_lm(modelo_juez, rotador, temperature=0.0, max_tokens=2048, num_retries=8)
     lm_reflexion = crear_lm(args.modelo_reflexion, rotador, temperature=args.reflexion_temperatura,
                             max_tokens=8192, num_retries=8)

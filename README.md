@@ -403,9 +403,10 @@ uv run python -m optimizacion.gepa optimizacion/resultados/baseline-completo.jso
 
 **Cuota en el plan gratuito de Groq.** `--budget light` son unas 420 evaluaciones (cada una, una
 llamada al generador y otra al juez), bastante más que lo que permite una sola key por día. Conviene
-cargar las keys del grupo en `GROQ_API_KEYS`. Si igual se agota la cuota, `gepa.py` corta y **no guarda**
+cargar las keys del grupo en `GROQ_API_KEYS` (de cuentas distintas: Groq cuenta los límites por organización, así que dos keys de la misma cuenta comparten la cuota). Si igual se agota la cuota, `gepa.py` corta y **no guarda**
 el resultado (GEPA tomaría las llamadas fallidas como puntaje 0 y el prompt no valdría). Al volver a
 correr el mismo comando, DSPy reutiliza desde su caché las llamadas ya hechas y retoma casi donde quedó.
+La respuesta del generador se limita a `GEPA_MAX_TOKENS_TAREA` tokens (900): Groq rechaza los pedidos cuyo `max_tokens` supera el límite de tokens de salida por minuto del modelo (OTPM, 1000 para Qwen).
 
 El prompt optimizado **no se activa solo**. Para evaluarlo contra el baseline:
 
