@@ -401,6 +401,12 @@ uv run python -m optimizacion.gepa optimizacion/resultados/baseline-completo.jso
   --ejemplos-docente ejemplos_docente.json   # [{"question": "...", "professor_response": "..."}]
 ```
 
+**Cuota en el plan gratuito de Groq.** `--budget light` son unas 420 evaluaciones (cada una, una
+llamada al generador y otra al juez), bastante más que lo que permite una sola key por día. Conviene
+cargar las keys del grupo en `GROQ_API_KEYS`. Si igual se agota la cuota, `gepa.py` corta y **no guarda**
+el resultado (GEPA tomaría las llamadas fallidas como puntaje 0 y el prompt no valdría). Al volver a
+correr el mismo comando, DSPy reutiliza desde su caché las llamadas ya hechas y retoma casi donde quedó.
+
 El prompt optimizado **no se activa solo**. Para evaluarlo contra el baseline:
 
 ```bash
