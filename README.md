@@ -438,6 +438,7 @@ Material complementario para entender el diseño, las decisiones y los resultado
 |---|---|
 | [Informe Técnico — Sprint 1](docs/Sprint%201/Informe_Tecnico_Sprint1_Grupo2.pdf) | Informe del primer sprint (objetivos, diseño inicial, resultados). |
 | [Informe Técnico — Sprint 2](docs/Sprint%202/Informe_Tecnico_Sprint2_Grupo2.pdf) | Informe del segundo sprint (multimodalidad, mejoras y evaluación). |
+| [Informe Técnico — Etapa 2](docs/Etapa%202/Informe_Tecnico_Etapa2_Grupo2.pdf) | Baseline sobre el golden set, LLM como juez y optimización del prompt con DSPy GEPA. |
 | [`docs/retrieval_tuning_log.md`](docs/retrieval_tuning_log.md) | Bitácora de ajustes de recuperación para reducir ruido entre fuentes manteniendo recall. |
 | [`docs/vuelta_original_vs_actual.md`](docs/vuelta_original_vs_actual.md) | Comparativa entre la versión original y la actual del pipeline. |
 | [`docs/Sprint 2/reporte_diagnostico_imagenes.json`](docs/Sprint%202/reporte_diagnostico_imagenes.json) | Diagnóstico de la recuperación imagen→imagen. |
