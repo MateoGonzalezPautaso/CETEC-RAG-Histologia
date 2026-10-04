@@ -9,6 +9,11 @@ import unicodedata
 # ── Thresholds ────────────────────────────────────────────────────────────────
 SIMILARITY_THRESHOLD = 0.70
 
+# Tope de caracteres de las secciones del manual en el prompt de respuesta (y en
+# la optimización con GEPA). Alcanza para 6 chunks de hasta CHUNK_MAX (850)
+# con sus encabezados; el juez lee los mismos 6000.
+MAX_CONTEXTO_PROMPT = 6000
+
 # ── Embedding dimensions ──────────────────────────────────────────────────────
 DIM_TEXTO = 384
 DIM_IMG_UNI = 1024
