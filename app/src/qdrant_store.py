@@ -66,6 +66,16 @@ class QdrantVectorStore:
         self._create_payload_indexes()
         print("✅ Esquema Qdrant listo (2 colecciones + payload index)")
 
+    async def reiniciar_chunks(self):
+        """Vacía la colección de chunks (antes de reindexar con otro chunking)."""
+        try:
+            self.client.delete_collection(COLLECTION_CHUNKS)
+        except Exception:
+            pass
+        self._ensure_chunks_collection()
+        self._create_payload_indexes()
+        print(f"   🧹 Colección '{COLLECTION_CHUNKS}' vaciada para reindexar")
+
     def _ensure_chunks_collection(self):
         try:
             info = self.client.get_collection(COLLECTION_CHUNKS)

@@ -211,7 +211,7 @@ cp .env.example app/.env
 
 El servidor usa los PDFs versionados en `data/pdf/`. Si se agregan PDFs en `app/pdf/`, esos tienen prioridad. Al iniciar, el servidor:
 
-1. Lee el texto de los PDFs y lo divide en chunks.
+1. Lee el texto de los PDFs y lo divide en chunks por página (`chunking.py`): cada chunk junta oraciones, ítems de lista y líneas de ficha enteras (hasta 850 caracteres), y las fichas de imagen («Imagen N») y los títulos de práctica empiezan un chunk nuevo.
 2. Extrae las imágenes de cada página.
 3. Genera embeddings de texto (MiniLM), visuales (UNI, PLIP) e indexa todo en Qdrant local.
 4. Extrae el temario automáticamente del contenido.
@@ -220,7 +220,7 @@ El servidor usa los PDFs versionados en `data/pdf/`. Si se agregan PDFs en `app/
 > se indexan todos los `*.pdf` de la carpeta, así que cada página quedaría duplicada con otra fuente.
 > Por eso `histologia_completo.pdf`, que usan los notebooks, vive en `notebooks/data/` y no en `data/pdf/`.
 
-El indexado se saltea solo si las colecciones de Qdrant ya están pobladas **y** existe la marca de indexación completa (`app/.qdrant_index_complete`). Si una indexación previa quedó incompleta —por una interrupción o porque algún ítem falló al indexarse— la marca no se escribe y el sistema reindexa automáticamente en el próximo arranque (los upserts son idempotentes). Para forzar una reindexación manual: borrar `app/.qdrant_index_complete` y, si se quiere empezar desde cero, borrar también `app/qdrant_data/`.
+El indexado se saltea solo si las colecciones de Qdrant ya están pobladas **y** existe la marca de indexación completa (`app/.qdrant_index_complete`). Si una indexación previa quedó incompleta —por una interrupción o porque algún ítem falló al indexarse— la marca no se escribe y el sistema reindexa automáticamente en el próximo arranque (los upserts son idempotentes). La marca guarda además la versión del chunking (`CHUNKING_VERSION`): si cambia, el próximo arranque vacía la colección de chunks y reindexa, sin que quede ningún chunk de la versión anterior. Para forzar una reindexación manual: borrar `app/.qdrant_index_complete` y, si se quiere empezar desde cero, borrar también `app/qdrant_data/`.
 
 ---
 
@@ -285,6 +285,7 @@ Cada consulta pasa por un grafo de nodos LangGraph (ver [Arquitectura](#arquitec
 │   │   ├── assistant.py       # Orquestador principal: grafo LangGraph + todos los nodos
 │   │   ├── graph.py           # AgentState: estado compartido entre nodos
 │   │   ├── config.py          # Constantes, rutas, anclas semánticas, reglas de entidades
+│   │   ├── chunking.py        # División de cada página en chunks por oraciones y fichas
 │   │   ├── claves.py          # Rotación de API keys de Groq (GROQ_API_KEYS)
 │   │   ├── llm.py             # Wrappers de LLM con reintentos y manejo de cuota
 │   │   ├── embeddings.py      # Wrappers PLIP y UNI para embeddings de imagen

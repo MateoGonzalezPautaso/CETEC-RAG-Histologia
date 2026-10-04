@@ -49,7 +49,7 @@ from optimizacion.juez import (  # noqa: E402  (carga app/.env)
     mensaje_juez, parsear_veredicto, puntaje_global,
 )
 from src.claves import RotadorClaves, _es_limite, opciones_razonamiento  # noqa: E402
-from src.config import LLM_MODELO, normalizar  # noqa: E402
+from src.config import LLM_MODELO, MAX_CONTEXTO_PROMPT, normalizar  # noqa: E402
 from src.prompts import CLAVE_RESPUESTA_TEXTO, instruccion_texto_default  # noqa: E402
 
 try:
@@ -63,7 +63,7 @@ except ImportError:  # pragma: no cover - mensaje para quien no instaló el grup
 MODELO_TAREA = f"groq/{LLM_MODELO}"
 MODELO_REFLEXION = "groq/openai/gpt-oss-120b"
 # Mismo truncado que _build_content_parts en producción.
-MAX_CONTEXTO = 4000
+MAX_CONTEXTO = MAX_CONTEXTO_PROMPT
 # Tope de salida del generador. Groq rechaza (sin reintento posible) los pedidos
 # cuyo max_tokens supera el límite de tokens de salida por minuto del modelo
 # (OTPM: 1000 para Qwen en el plan gratuito). Una respuesta ronda 300 tokens.

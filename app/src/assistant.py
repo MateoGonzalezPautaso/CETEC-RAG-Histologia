@@ -25,10 +25,11 @@ from .claves import crear_chat_groq
 from .classifier import ClasificadorSemantico
 from .config import (
     COLLECTION_CHUNKS, COLLECTION_IMAGENES, DIRECTORIO_IMAGENES, DIRECTORIO_PDFS,
-    FEATURES_DISCRIMINATORIAS, LLM_MODELO, PROMPTS_OPTIMIZADOS, PROMPTS_OPTIMIZADOS_PATH,
-    QDRANT_PATH, SIMILARITY_THRESHOLD, TRAZAS_DIR, TRAZAS_HABILITADAS,
+    FEATURES_DISCRIMINATORIAS, LLM_MODELO, MAX_CONTEXTO_PROMPT, PROMPTS_OPTIMIZADOS,
+    PROMPTS_OPTIMIZADOS_PATH, QDRANT_PATH, SIMILARITY_THRESHOLD, TRAZAS_DIR, TRAZAS_HABILITADAS,
     _safe, normalizar,
 )
+from .chunking import CHUNK_MAX, CHUNKING_VERSION, dividir_en_chunks
 from .embeddings import PlipWrapper, UniWrapper
 from .extractors import ExtractorEntidades, ExtractorImagenesPDF, ExtractorTemario
 from .graph import AgentState
@@ -561,7 +562,7 @@ class AsistenteHistologiaQdrant:
                 if r.get("imagen_path"):
                     enc += f" | Imagen: {os.path.basename(r['imagen_path'])}"
                 enc += "]"
-                bloques.append(f"{enc}\n{_safe(r.get('texto',''))[:700]}")
+                bloques.append(f"{enc}\n{_safe(r.get('texto',''))[:CHUNK_MAX]}")
             state["contexto_documentos"] = "\n\n".join(bloques)
             modo_str = "TEXTO" if es_solo_texto else "IMAGEN+TEXTO"
             print(f"✅ {len(validos)} válidos | {len(imagenes_unicas)} imgs | Modo: {modo_str}")
@@ -919,8 +920,8 @@ class AsistenteHistologiaQdrant:
             content_parts.append({"type": "text", "text": f"**HISTORIAL:**\n{historial_str}\n\n---\n"})
 
         ctx_docs = state["contexto_documentos"]
-        if len(ctx_docs) > 4000:
-            ctx_docs = ctx_docs[:4000] + "\n... [contexto truncado]"
+        if len(ctx_docs) > MAX_CONTEXTO_PROMPT:
+            ctx_docs = ctx_docs[:MAX_CONTEXTO_PROMPT] + "\n... [contexto truncado]"
 
         analisis_comp_str = _safe(state.get("analisis_comparativo"))
         estructura_str = _safe(state.get("estructura_identificada"))
@@ -1263,18 +1264,33 @@ class AsistenteHistologiaQdrant:
     ):
         base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         marker_path = os.path.join(base_dir, ".qdrant_index_complete")
+        # La marca guarda la versión del chunking con que se indexó ("ok" en las
+        # versiones anteriores, que cortaban cada 500 caracteres).
+        try:
+            with open(marker_path) as f:
+                version_indexada = f.read().strip()
+        except OSError:
+            version_indexada = ""
 
         if not forzar:
             try:
                 n_chunks = self.qdrant_store.client.count(collection_name=COLLECTION_CHUNKS).count
                 n_imgs = self.qdrant_store.client.count(collection_name=COLLECTION_IMAGENES).count
-                if n_chunks > 0 and n_imgs > 0 and os.path.exists(marker_path):
+                if n_chunks > 0 and n_imgs > 0 and version_indexada == CHUNKING_VERSION:
                     print(f"✅ BD ya poblada ({n_chunks} chunks, {n_imgs} imágenes). Saltando indexación.")
                     return
-                if n_chunks > 0 and n_imgs > 0:
+                if n_chunks > 0 and n_imgs > 0 and version_indexada:
+                    print(f"⚠️ Los chunks se indexaron con otro chunking ({version_indexada!r}, el actual es "
+                          f"{CHUNKING_VERSION!r}) — reindexando.")
+                elif n_chunks > 0 and n_imgs > 0:
                     print("⚠️ BD poblada pero sin marca de completitud — reindexando para garantizar consistencia.")
             except Exception as e:
                 print(f"⚠️ No se pudo verificar estado de la BD: {e}")
+
+        if version_indexada != CHUNKING_VERSION:
+            # Con otro chunking cambian los textos y la cantidad de chunks por
+            # página: los upserts no pisan los que sobran y quedarían chunks viejos.
+            await self.qdrant_store.reiniciar_chunks()
 
         print("📄 Extrayendo imágenes para vincular a chunks...")
         imagenes_pdf = self.extractor_imagenes.extraer_de_directorio(directorio_pdfs)
@@ -1376,7 +1392,7 @@ class AsistenteHistologiaQdrant:
         if fallos == 0:
             try:
                 with open(marker_path, "w") as f:
-                    f.write("ok")
+                    f.write(CHUNKING_VERSION)
             except Exception as e:
                 print(f"⚠️ No se pudo escribir marca de completitud: {e}")
         else:
@@ -1407,8 +1423,8 @@ class AsistenteHistologiaQdrant:
             print(f"⚠️ Error leyendo por páginas {path}: {e}")
         return paginas
 
-    def _chunks(self, texto: str, size: int = 500) -> List[str]:
-        return [texto[i:i + size] for i in range(0, len(texto), size)]
+    def _chunks(self, texto: str) -> List[str]:
+        return dividir_en_chunks(texto)
 
     # ── Public entry point ────────────────────────────────────────────────────
 
