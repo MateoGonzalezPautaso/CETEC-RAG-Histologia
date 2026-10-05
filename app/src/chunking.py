@@ -21,6 +21,14 @@ enteros:
 - "Imagen N" y "Práctica N" empiezan un chunk nuevo: así la ficha de una
   imagen o el título de una práctica no se mezclan con el texto anterior. La
   descripción de la foto ("Foto 1: ...") queda con la ficha de su imagen.
+- Los encabezados de la plantilla de práctica (Objetivos, Fundamento teórico,
+  Materiales, Procedimiento, Resultados...) también empiezan un chunk: así una
+  definición no comparte chunk (ni embedding) con la lista de materiales, y el
+  título de la práctica se repite al principio de cada sección.
+- Una frase que presenta una lista ("cada lobulillo está compuesto por:") o un
+  encabezado corto ("Oligodendrocitos.") va siempre con lo que sigue: nunca
+  cierra un chunk. En las fichas, cada valor queda con su etiqueta
+  ("Laminilla No: 53 Golgi").
 """
 
 import re
@@ -34,13 +42,32 @@ CHUNK_MAX = 850
 CHUNK_SOLAPAMIENTO = 250
 # Cambia cuando cambia la forma de dividir: la indexación lo usa para saber si
 # los chunks guardados en Qdrant son de otra versión y hay que rehacerlos.
-CHUNKING_VERSION = "2-oraciones"
+CHUNKING_VERSION = "3-secciones"
 
 # Glifos de viñeta que PyMuPDF devuelve solos en una línea (Symbol/Wingdings).
 _VINETAS = {"\uf0b7", "\uf0a7", "\uf0d8", "\u2022", "\u25cf", "\u25cb", "\u25aa", "\u25a0", "\u25e6", "-", "o"}
 _INICIO_ITEM = re.compile(r"^(?:[a-z]\)|\d{1,2}[.)]\s|[\u2022\u25cf\u25cb\u25aa\u25a0\u25e6\uf0b7\uf0a7]\s*)")
 _INICIO_BLOQUE = re.compile(r"^(?:Imagen|Práctica|Practica)\s*\d", re.IGNORECASE)
+_INICIO_SECCION = re.compile(
+    r"^(?:Objetivos|Fundamento te[oó]rico|Materiales|Equipo|Servicios|Procedimiento|Resultados|"
+    r"Bibliograf[ií]a|Descripci[oó]n)\b",
+    re.IGNORECASE,
+)
 _FIN_SEGMENTO = (".", ":", ";", "?", "!")
+# Etiqueta de ficha ("Laminilla No:", "Estructura señalada:"): el valor viene en
+# la línea siguiente y va con ella.
+_LARGO_ETIQUETA = 40
+
+
+def _es_etiqueta(texto: str) -> bool:
+    return texto.endswith(":") and len(texto) <= _LARGO_ETIQUETA
+
+
+def _es_encabezado(segmento: str) -> bool:
+    """Segmento que presenta lo que sigue: nunca debería cerrar un chunk."""
+    if segmento.endswith(":"):
+        return True  # "cada lobulillo está compuesto por:"
+    return segmento.endswith(".") and len(segmento) <= _LARGO_ETIQUETA and len(segmento.split()) <= 4
 _FIN_ORACION = re.compile(r"(?<=[.!?])\s+")
 
 
@@ -63,9 +90,11 @@ def _segmentos(texto: str) -> List[str]:
         nuevo = (
             not actual
             or vineta_pendiente
-            or actual.endswith(_FIN_SEGMENTO)
+            or (actual.endswith(_FIN_SEGMENTO) and not _es_etiqueta(actual))
+            or _es_etiqueta(linea)
             or _INICIO_ITEM.match(linea)
             or _INICIO_BLOQUE.match(linea)
+            or _INICIO_SECCION.match(linea)
         )
         if nuevo:
             if actual:
@@ -134,18 +163,34 @@ def dividir_en_chunks(
 
     for seg in segmentos:
         entra = largo + len(seg) + 1 <= maximo
-        if _INICIO_BLOQUE.match(seg):
+        es_bloque = bool(_INICIO_BLOQUE.match(seg))
+        es_seccion = bool(_INICIO_SECCION.match(seg))
+        if es_bloque or es_seccion:
             if largo >= minimo or not entra:
                 cerrar()
-            titulo = seg if len(seg) <= solapamiento else ""
+                if es_seccion and titulo and len(titulo) + len(seg) + 1 <= maximo:
+                    actual, largo, solo_solape = [titulo], len(titulo), True
+            if es_bloque:
+                titulo = seg if len(seg) <= solapamiento else ""
         elif actual and largo + len(seg) + 1 > objetivo and (largo >= minimo or not entra):
-            ultimo = actual[-1]
-            cerrar()
-            repetir = [titulo] if titulo else []
-            if len(ultimo) <= solapamiento and ultimo != titulo:
-                repetir.append(ultimo)
+            if len(actual) > 1 and _es_encabezado(actual[-1]):
+                # La frase que presenta una lista (o el nombre de lo que se
+                # define, "Oligodendrocitos.") pasa entera al chunk siguiente.
+                intro = actual.pop()
+                largo -= len(intro) + 1
+                cerrar()
+                repetir = [titulo] if titulo and titulo != intro else []
+                repetir.append(intro)
+                solo_solape_intro = True
+            else:
+                ultimo = actual[-1]
+                cerrar()
+                repetir = [titulo] if titulo else []
+                if len(ultimo) <= solapamiento and ultimo != titulo:
+                    repetir.append(ultimo)
+                solo_solape_intro = False
             while repetir and sum(len(r) + 1 for r in repetir) + len(seg) > maximo:
-                repetir.pop()
+                repetir.pop(0 if solo_solape_intro and len(repetir) > 1 else -1)
             if repetir:
                 actual, solo_solape = repetir, True
                 largo = sum(len(r) for r in repetir) + len(repetir) - 1
