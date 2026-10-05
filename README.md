@@ -301,7 +301,7 @@ Cada consulta pasa por un grafo de nodos LangGraph (ver [Arquitectura](#arquitec
 │   │   ├── app.js
 │   │   └── style.css
 │   │
-│   ├── optimizacion/          # Etapa 2: modelos.py, baseline.py, juez.py, gepa.py (DSPy GEPA) y comparar.py
+│   ├── optimizacion/          # Etapa 2: modelos.py, baseline.py, juez.py, gepa.py (DSPy GEPA), comparar.py e inspeccionar.py
 │   ├── evaluar_ragas.py       # Evaluación RAGAS del pipeline
 │   ├── eval_reliability.py    # Smoke test de confiabilidad
 │   └── eval_set_basico.json   # Conjunto de preguntas de evaluación
@@ -423,6 +423,13 @@ uv run python -m optimizacion.comparar \
 `--solo-val` compara solo las preguntas de validación (las que GEPA no usó para proponer cambios).
 Si el resultado mejora, se deja `PROMPTS_OPTIMIZADOS=true` en `app/.env`; cada traza registra qué
 prompt estaba activo (`prompt_respuesta`). El modo multimodal no se modifica.
+
+Para ver qué secciones del manual le llegaron al LLM en preguntas puntuales (y separar una falla de
+recuperación de una de generación), sin llamar a ningún modelo:
+
+```bash
+uv run python -m optimizacion.inspeccionar optimizacion/resultados/baseline-v4.jsonl 1 5 15
+```
 
 El archivo usa el mismo formato que el agente de Física de
 [`dracero/a2a-test-alone`](https://github.com/dracero/a2a-test-alone)
