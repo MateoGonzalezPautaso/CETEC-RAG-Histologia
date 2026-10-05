@@ -15,10 +15,11 @@ from qdrant_client.models import (
 
 from .config import (
     COLLECTION_CHUNKS, COLLECTION_IMAGENES,
-    DIM_IMG_PLIP, DIM_IMG_UNI, DIM_TEXTO,
+    DIM_IMG_PLIP, DIM_IMG_UNI, DIM_TEXTO, HIBRIDA_PESO_VECTOR,
     INDEX_PLIP, INDEX_TEXTO, INDEX_UNI, QDRANT_PATH,
     normalizar as _sin_tildes,
 )
+from .lexico import IndiceBM25
 from .llm import embed_query_con_reintento
 
 
@@ -41,6 +42,9 @@ class QdrantVectorStore:
             os.makedirs(self.path, exist_ok=True)
             self.client = QdrantClient(path=self.path, timeout=60)
             self.location = self.path
+        # Chunks con sus vectores e índice BM25, para la búsqueda de texto.
+        # Se rearma cuando cambia la colección (upsert o reinicio).
+        self._corpus: Optional[dict] = None
 
     # ── Connection ────────────────────────────────────────────────────────────
 
@@ -72,6 +76,7 @@ class QdrantVectorStore:
             self.client.delete_collection(COLLECTION_CHUNKS)
         except Exception:
             pass
+        self._corpus = None
         self._ensure_chunks_collection()
         self._create_payload_indexes()
         print(f"   🧹 Colección '{COLLECTION_CHUNKS}' vaciada para reindexar")
@@ -187,6 +192,7 @@ class QdrantVectorStore:
             },
         )
         self.client.upsert(collection_name=COLLECTION_CHUNKS, points=[point])
+        self._corpus = None
 
     async def upsert_imagen(
         self, imagen_id: str, path: str, fuente: str,
@@ -215,7 +221,9 @@ class QdrantVectorStore:
 
     # ── Search ────────────────────────────────────────────────────────────────
 
-    async def _scroll_all(self, collection_name: str, scroll_filter=None, batch: int = 500) -> list:
+    async def _scroll_all(
+        self, collection_name: str, scroll_filter=None, batch: int = 500, with_vectors: bool = False,
+    ) -> list:
         """Scroll an entire collection (paginated) off the event loop."""
         puntos: list = []
         next_offset = None
@@ -223,7 +231,7 @@ class QdrantVectorStore:
             lote, next_offset = await asyncio.to_thread(
                 lambda off=next_offset: self.client.scroll(
                     collection_name=collection_name, scroll_filter=scroll_filter,
-                    limit=batch, offset=off, with_payload=True, with_vectors=False,
+                    limit=batch, offset=off, with_payload=True, with_vectors=with_vectors,
                 )
             )
             puntos.extend(lote)
@@ -326,8 +334,8 @@ class QdrantVectorStore:
                 scroll_filter=Filter(should=conditions),
                 limit=top_k,
             )
-            # Score must clear umbral_texto (0.30) after the text-mode weight (×0.60)
-            # in busqueda_hibrida, otherwise entity-only hits are always filtered out.
+            # Fixed score: scroll returns matches in no particular order. Only the
+            # image path of busqueda_hibrida merges these hits (weight ×0.50).
             return [{
                 "id": str(r.id), "texto": r.payload.get("texto", ""),
                 "fuente": r.payload.get("fuente", ""), "tipo": "texto",
@@ -344,44 +352,67 @@ class QdrantVectorStore:
             print(f"⚠️ Error búsqueda entidades: {e}")
             return []
 
-    async def busqueda_chunks_por_texto(self, terminos: list, top_k: int = 10) -> list:
-        """Keyword fallback when vector search returns weak results."""
-        if not terminos:
-            return []
+    async def _corpus_chunks(self) -> dict:
+        """Chunks con su vector normalizado y el índice BM25 (en memoria, se rearma al cambiar la colección)."""
+        if self._corpus is None:
+            puntos = [p for p in await self._scroll_all(COLLECTION_CHUNKS, with_vectors=True) if p.vector]
+            matriz = np.asarray([p.vector for p in puntos], dtype=np.float32).reshape(len(puntos), -1)
+            normas = np.linalg.norm(matriz, axis=1, keepdims=True)
+            normas[normas == 0] = 1.0
+            self._corpus = {
+                "puntos": puntos,
+                "matriz": matriz / normas,
+                "bm25": IndiceBM25([p.payload.get("texto", "") or "" for p in puntos]),
+            }
+        return self._corpus
 
-        terminos_lower = list(set(
-            [t.lower() for t in terminos] + [_sin_tildes(t.lower()) for t in terminos]
-        ))
-        terminos_largos = [t for t in terminos_lower if len(t.split()) >= 2]
+    async def busqueda_densa_lexica(
+        self, embedding: Optional[list], consulta: str, top_k: int = 10, peso_vector: Optional[float] = None,
+    ) -> list:
+        """
+        Puntaje de texto de cada chunk: peso × coseno (MiniLM) + (1 − peso) × BM25
+        normalizado al mejor chunk de la consulta.
 
+        Se calcula sobre todos los chunks (son unos cien), no sobre dos listas de
+        top-k: un chunk que solo aparece en una de las dos búsquedas (la frase
+        exacta de la consulta en un chunk largo que el embedding no prioriza)
+        conserva su puntaje en lugar de perder contra los que aparecen en ambas.
+        Si ningún chunk comparte términos con la consulta, queda solo el coseno.
+        """
+        peso = HIBRIDA_PESO_VECTOR if peso_vector is None else peso_vector
         try:
-            all_chunks = await self._scroll_all(COLLECTION_CHUNKS)
-            resultados = []
-            for r in all_chunks:
-                texto = (r.payload.get("texto", "") or "").lower()
-                texto_norm = _sin_tildes(texto)
-                matches_largos = sum(1 for t in terminos_largos if t in texto or t in texto_norm)
-                matches = sum(1 for t in terminos_lower if t in texto or t in texto_norm)
-                if matches:
-                    similitud = 0.95 if matches_largos else min(0.85, 0.50 + 0.08 * matches)
-                    resultados.append({
-                        "id": str(r.id), "texto": r.payload.get("texto", ""),
-                        "fuente": r.payload.get("fuente", ""), "tipo": "texto",
-                        "imagen_path": None, "similitud": similitud,
-                        "nombre_archivo": "", "etiqueta": "",
-                        "imagenes_pagina": r.payload.get("imagenes_pagina", []),
-                        "pagina": r.payload.get("pagina"),
-                        "dominios": r.payload.get("dominios", []),
-                        "organos": r.payload.get("organos", []),
-                        "celulas": r.payload.get("celulas", []),
-                        "temas": r.payload.get("temas", []),
-                    })
-            if resultados:
-                print(f"   📝 {len(resultados)} chunks encontrados (keyword fallback)")
-            return sorted(resultados, key=lambda x: x.get("similitud", 0), reverse=True)[:top_k]
+            corpus = await self._corpus_chunks()
         except Exception as e:
-            print(f"⚠️ Error búsqueda chunks por texto: {e}")
+            print(f"⚠️ Error cargando chunks para la búsqueda de texto: {e}")
             return []
+        puntos = corpus["puntos"]
+        if not puntos:
+            return []
+        if embedding:
+            q = np.asarray(embedding, dtype=np.float32)
+            coseno = corpus["matriz"] @ (q / (np.linalg.norm(q) or 1.0))
+        else:
+            coseno = np.zeros(len(puntos), dtype=np.float32)
+        bm25 = np.asarray(corpus["bm25"].puntajes(consulta or ""), dtype=np.float32)
+        if bm25.max() > 0:
+            bm25 = bm25 / bm25.max()
+        else:
+            peso = 1.0
+        puntaje = peso * coseno + (1 - peso) * bm25
+        salida = []
+        for i in np.argsort(-puntaje)[:top_k]:
+            r = puntos[int(i)]
+            salida.append({
+                "id": str(r.id), "texto": r.payload.get("texto", ""),
+                "fuente": r.payload.get("fuente", ""), "tipo": "texto",
+                "imagen_path": None, "similitud": float(puntaje[i]),
+                "sim_vector": round(float(coseno[i]), 4), "bm25": round(float(bm25[i]), 4),
+                "nombre_archivo": "", "etiqueta": "",
+                "imagenes_pagina": r.payload.get("imagenes_pagina", []),
+                "pagina": r.payload.get("pagina"),
+                "dominios": r.payload.get("dominios", []),
+            })
+        return salida
 
     async def busqueda_imagenes_por_texto(self, entidades: dict, top_k: int = 5) -> list:
         """Search images whose caption/page text contains query terms."""
@@ -625,10 +656,18 @@ class QdrantVectorStore:
         entidades,
         top_k: int = 10,
         incluir_imagenes_texto: bool = False,
+        consulta_lexica: str = "",
     ) -> list:
+        """
+        Con imagen: texto + UNI/PLIP + entidades + chunks de las páginas de las
+        imágenes más parecidas. Sin imagen: coseno + BM25 sobre todos los chunks
+        (busqueda_densa_lexica, con `consulta_lexica` como consulta de BM25) y,
+        si la consulta es de reconocimiento visual, el texto de las imágenes.
+        """
         res_pag_chunks = []
         res_img_texto = []
-        res_keyword = []
+        res_texto, res_uni, res_plip, res_ent = [], [], [], []
+        tiene_imagen = imagen_embedding_uni is not None or imagen_embedding_plip is not None
 
         # Independent read-only searches run concurrently; each offloads its
         # blocking qdrant-client call via asyncio.to_thread.
@@ -645,14 +684,11 @@ class QdrantVectorStore:
                 return []
             return [r for r in await self.busqueda_vectorial(imagen_embedding_plip, INDEX_PLIP, top_k) if r.get("similitud", 0) >= 0.80]
 
-        res_texto, res_uni, res_plip, res_ent = await asyncio.gather(
-            _buscar_texto(), _buscar_uni(), _buscar_plip(),
-            self.busqueda_por_entidades(entidades, top_k),
-        )
-
-        tiene_imagen = imagen_embedding_uni is not None or imagen_embedding_plip is not None
-
         if tiene_imagen:
+            res_texto, res_uni, res_plip, res_ent = await asyncio.gather(
+                _buscar_texto(), _buscar_uni(), _buscar_plip(),
+                self.busqueda_por_entidades(entidades, top_k),
+            )
             # res_uni / res_plip ya vienen filtrados por similitud >= 0.80,
             # así que tomamos directamente los mejores resultados.
             top_img = res_uni + res_plip
@@ -661,6 +697,8 @@ class QdrantVectorStore:
                 pagina = img_r.get("pagina")
                 if fuente and pagina is not None:
                     res_pag_chunks.extend(await self.busqueda_chunks_por_pagina(fuente, pagina))
+        else:
+            res_texto = await self.busqueda_densa_lexica(texto_embedding, consulta_lexica, top_k)
 
         if texto_embedding and incluir_imagenes_texto:
             try:
@@ -687,29 +725,6 @@ class QdrantVectorStore:
             except Exception:
                 pass
 
-        # Keyword fallback for text-only queries with weak vector results
-        if not tiene_imagen:
-            consulta_kw = entidades.get("_consulta", [])
-            tejidos = entidades.get("tejidos", [])
-            estructuras = entidades.get("estructuras", [])
-            terminos = tejidos + estructuras + consulta_kw
-            top_vector_sim = max((r.get("similitud", 0) for r in res_texto), default=0)
-            estructuras_especificas = [
-                t for t in estructuras
-                if len(str(t).split()) >= 2 or any(
-                    clave in str(t).lower()
-                    for clave in ("lamina", "lámina", "tunica", "túnica", "sertoli", "leydig")
-                )
-            ]
-            if terminos and (top_vector_sim < 0.50 or estructuras_especificas):
-                res_keyword = await self.busqueda_chunks_por_texto(terminos, top_k)
-                dominios = set(entidades.get("dominios", []) or [])
-                if dominios and res_keyword:
-                    res_keyword = [
-                        r for r in res_keyword
-                        if not r.get("dominios") or dominios.intersection(set(r.get("dominios", [])))
-                    ]
-
         # Weighted merge
         combined: Dict[str, dict] = {}
 
@@ -733,18 +748,22 @@ class QdrantVectorStore:
             agregar(res_ent, 0.50)
             agregar(res_pag_chunks, 0.15)
         else:
-            agregar(res_texto, 0.80)
-            agregar(res_uni, 0.20, es_visual=True)
-            agregar(res_plip, 0.20, es_visual=True)
+            agregar(res_texto, 1.00)
             agregar(res_img_texto, 0.40)
-            agregar(res_ent, 0.60)
-            agregar(res_keyword, 1.00)
 
         final = sorted(combined.values(), key=lambda x: x["similitud"], reverse=True)
 
-        print(
-            f"   📊 Híbrida: Txt={len(res_texto)} | UNI={len(res_uni)} | "
-            f"PLIP={len(res_plip)} | Ent={len(res_ent)} | "
-            f"ImgTxt={len(res_img_texto)} | Keyword={len(res_keyword)} → {len(final)}"
-        )
+        if tiene_imagen:
+            print(
+                f"   📊 Híbrida: Txt={len(res_texto)} | UNI={len(res_uni)} | "
+                f"PLIP={len(res_plip)} | Ent={len(res_ent)} | "
+                f"PágImg={len(res_pag_chunks)} → {len(final)}"
+            )
+        else:
+            mejor = res_texto[0] if res_texto else {}
+            print(
+                f"   📊 Híbrida: Coseno+BM25={len(res_texto)} | ImgTxt={len(res_img_texto)} → {len(final)}"
+                + (f" | 1º {mejor.get('fuente')} p{mejor.get('pagina')} "
+                   f"(coseno={mejor.get('sim_vector', 0):.2f}, bm25={mejor.get('bm25', 0):.2f})" if mejor else "")
+            )
         return final[:15]

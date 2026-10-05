@@ -71,7 +71,7 @@ Proyecto desarrollado en el **CETEC UBATIC** (Facultad de Ingeniería, Universid
 - 🗣️ **Preguntas en lenguaje natural** sobre el manual, con respuestas **citadas** y trazables a la fuente.
 - 🖼️ **Multimodal**: subí una imagen histológica y preguntá sobre ella; el sistema la analiza con modelos de visión de patología.
 - 🔬 **Análisis comparativo imagen→imagen**: compara la imagen del usuario contra las imágenes de referencia del manual.
-- 🔎 **Búsqueda híbrida**: combina similitud semántica de texto, entidades (tejidos/tinciones/células), keywords y embeddings visuales.
+- 🔎 **Búsqueda híbrida**: en consultas de texto combina similitud semántica (MiniLM) y BM25 sobre todos los chunks; con imagen suma entidades (tejidos/tinciones/células) y embeddings visuales.
 - 🧭 **Clasificador de dominio**: descarta consultas que no son de histología antes de gastar recuperación/LLM.
 - 🧠 **Memoria por sesión**: recuerda el historial y la imagen activa entre turnos, aislada por usuario.
 - 📊 **Evaluación cuantitativa**: pipeline con RAGAS (recall@k, fidelidad) + smoke tests de confiabilidad.
@@ -261,7 +261,7 @@ Cada consulta pasa por un grafo de nodos LangGraph (ver [Arquitectura](#arquitec
 2. **procesar_imagen** — si hay imagen nueva, genera embeddings UNI y PLIP; si no hay imagen nueva pero había una en el turno anterior, la reutiliza.
 3. **clasificar** — verifica que la consulta sea sobre histología usando similitud semántica y, si está cerca del umbral, un árbitro LLM.
 4. **generar_consulta** — reformula la pregunta para mejorar el retrieval, extrae entidades (tejidos, tinciones, células, etc.).
-5. **buscar_qdrant** — búsqueda híbrida: texto semántico + entidades + keyword + captions de imagen + embeddings visuales.
+5. **buscar_qdrant** — búsqueda híbrida. Sin imagen: puntaje de cada chunk = `HIBRIDA_PESO_VECTOR` (0.5) × coseno + el resto × BM25 normalizado (un término raro como "osteona" o "laringe 43" decide el orden), más captions de imagen si la consulta es visual. Con imagen: texto semántico + entidades + embeddings visuales UNI/PLIP.
 6. **filtrar_contexto** — descarta resultados por debajo del umbral de similitud y limita a 6 bloques de contexto.
 7. **analisis_comparativo** — si hay imagen del usuario, la compara contra imágenes del manual.
 8. **generar_respuesta** — sintetiza la respuesta con el LLM usando el contexto recuperado.
@@ -301,7 +301,7 @@ Cada consulta pasa por un grafo de nodos LangGraph (ver [Arquitectura](#arquitec
 │   │   ├── app.js
 │   │   └── style.css
 │   │
-│   ├── optimizacion/          # Etapa 2: modelos.py, baseline.py, juez.py, gepa.py (DSPy GEPA), comparar.py e inspeccionar.py
+│   ├── optimizacion/          # Etapa 2: modelos.py, baseline.py, juez.py, gepa.py (DSPy GEPA), comparar.py, inspeccionar.py y recuperacion.py
 │   ├── evaluar_ragas.py       # Evaluación RAGAS del pipeline
 │   ├── eval_reliability.py    # Smoke test de confiabilidad
 │   └── eval_set_basico.json   # Conjunto de preguntas de evaluación
@@ -429,6 +429,14 @@ recuperación de una de generación), sin llamar a ningún modelo:
 
 ```bash
 uv run python -m optimizacion.inspeccionar optimizacion/resultados/baseline-v4.jsonl 1 5 15
+```
+
+Para elegir el peso coseno/BM25 de la búsqueda de texto (`HIBRIDA_PESO_VECTOR`) sin gastar cuota,
+`recuperacion.py` mide recall fuente+página@5 de la búsqueda sola con varios pesos (1.0 = solo
+embeddings, 0.0 = solo BM25):
+
+```bash
+uv run python -m optimizacion.recuperacion --baseline optimizacion/resultados/baseline-v4.jsonl
 ```
 
 El archivo usa el mismo formato que el agente de Física de
