@@ -64,8 +64,9 @@ def mostrar(reg: dict, juicio: Optional[dict]) -> None:
     for i, r in enumerate(rec.get("resultados_validos") or [], 1):
         marca = "✔" if (r.get("fuente"), r.get("pagina")) in esperadas else " "
         texto = " ".join((r.get("texto") or "").split())
+        partes = "" if r.get("bm25") is None else f" (coseno={r['sim_vector']:.2f} bm25={r['bm25']:.2f})"
         print(f"   {marca} {i}. {r.get('fuente')} p{r.get('pagina')} {r.get('tipo')} "
-              f"sim={r.get('similitud', 0):.2f} | {texto[:120]}")
+              f"sim={r.get('similitud', 0):.2f}{partes} | {texto[:110]}")
     ref = _palabras(reg.get("ground_truth", ""))
     ctx = _palabras(rec.get("contexto_documentos") or "")
     if ref:

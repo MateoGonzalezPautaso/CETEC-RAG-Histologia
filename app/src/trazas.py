@@ -37,6 +37,9 @@ def _resultados(resultados: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             "pagina": r.get("pagina"),
             "tipo": r.get("tipo"),
             "similitud": r.get("similitud"),
+            # Componentes del puntaje en la búsqueda de texto (coseno y BM25 normalizado).
+            "sim_vector": r.get("sim_vector"),
+            "bm25": r.get("bm25"),
             "texto": r.get("texto"),
             "imagen": os.path.basename(img) if img else None,
         })

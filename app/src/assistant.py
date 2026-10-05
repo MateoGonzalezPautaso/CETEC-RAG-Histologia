@@ -465,6 +465,10 @@ class AsistenteHistologiaQdrant:
             entidades=entidades,
             top_k=10,
             incluir_imagenes_texto=pide_visual,
+            # BM25 busca con la pregunta original y con la reescrita: la
+            # reescritura a veces pierde un término puntual ("43") y la original
+            # puede ser un seguimiento ("¿y su función?") sin el tema.
+            consulta_lexica=f"{state.get('consulta_texto', '')} {state.get('consulta_busqueda_texto') or ''}",
         )
 
         state["resultados_busqueda"] = resultados

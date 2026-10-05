@@ -14,6 +14,10 @@ SIMILARITY_THRESHOLD = 0.70
 # con sus encabezados; el juez lee los mismos 6000.
 MAX_CONTEXTO_PROMPT = 6000
 
+# Búsqueda de texto (consultas sin imagen): puntaje = peso × coseno (MiniLM)
+# + (1 − peso) × BM25 normalizado al mejor chunk. Ver qdrant_store.busqueda_densa_lexica.
+HIBRIDA_PESO_VECTOR = float(os.getenv("HIBRIDA_PESO_VECTOR", "0.5"))
+
 # ── Embedding dimensions ──────────────────────────────────────────────────────
 DIM_TEXTO = 384
 DIM_IMG_UNI = 1024
