@@ -211,7 +211,7 @@ cp .env.example app/.env
 
 El servidor usa los PDFs versionados en `data/pdf/`. Si se agregan PDFs en `app/pdf/`, esos tienen prioridad. Al iniciar, el servidor:
 
-1. Lee el texto de los PDFs y lo divide en chunks por página (`chunking.py`): cada chunk junta oraciones, ítems de lista y líneas de ficha enteras (hasta 850 caracteres), y las fichas de imagen («Imagen N») y los títulos de práctica empiezan un chunk nuevo.
+1. Lee el texto de los PDFs y lo divide en chunks por página (`chunking.py`): cada chunk junta oraciones, ítems de lista y líneas de ficha enteras (hasta 850 caracteres), y las fichas de imagen («Imagen N»), los títulos de práctica y sus secciones (Objetivos, Materiales, Procedimiento…) empiezan un chunk nuevo. Cuando una página continúa la anterior, sus chunks arrancan con el título de la práctica y, si sigue una lista, con su encabezado (p. ej. «Hueso compacto: Células.» en la página de los osteocitos).
 2. Extrae las imágenes de cada página.
 3. Genera embeddings de texto (MiniLM), visuales (UNI, PLIP) e indexa todo en Qdrant local.
 4. Extrae el temario automáticamente del contenido.
@@ -430,6 +430,11 @@ recuperación de una de generación), sin llamar a ningún modelo:
 ```bash
 uv run python -m optimizacion.inspeccionar optimizacion/resultados/baseline-v4.jsonl 1 5 15
 ```
+
+Si se corrigen referencias o páginas esperadas del golden set, las corridas anteriores se vuelven a
+medir sin correr el pipeline: `juez --referencias-actuales` juzga de nuevo solo las preguntas cuya
+referencia cambió (copia el resto) y escribe `baseline-X-juez-ref.jsonl`; `baseline --recalcular-recall`
+recalcula el recall con las páginas actuales y escribe `baseline-X-resumen-ref.json`.
 
 Para elegir el peso coseno/BM25 de la búsqueda de texto (`HIBRIDA_PESO_VECTOR`) sin gastar cuota,
 `recuperacion.py` mide recall fuente+página@5 de la búsqueda sola con varios pesos (1.0 = solo

@@ -29,10 +29,16 @@ enteros:
   encabezado corto ("Oligodendrocitos.") va siempre con lo que sigue: nunca
   cierra un chunk. En las fichas, cada valor queda con su etiqueta
   ("Laminilla No: 53 Golgi").
+- Cada página se divide por separado (el chunk guarda su página), pero el texto
+  sigue de una a otra: la lista "Hueso compacto: Células." empieza en una página
+  y los osteocitos quedan en la siguiente. Con `contexto` (un dict por PDF que se
+  pasa a todas sus páginas en orden), una página que no empieza con "Imagen" o
+  "Práctica" arranca con el título de la práctica en curso y, si continúa la
+  misma sección, con el último encabezado que presentaba una lista.
 """
 
 import re
-from typing import List
+from typing import List, Optional
 
 # MiniLM lee hasta 256 tokens (unos 750 caracteres de español): un chunk más
 # largo quedaría representado solo por su principio.
@@ -42,7 +48,7 @@ CHUNK_MAX = 850
 CHUNK_SOLAPAMIENTO = 250
 # Cambia cuando cambia la forma de dividir: la indexación lo usa para saber si
 # los chunks guardados en Qdrant son de otra versión y hay que rehacerlos.
-CHUNKING_VERSION = "3-secciones"
+CHUNKING_VERSION = "4-continuacion"
 
 # Glifos de viñeta que PyMuPDF devuelve solos en una línea (Symbol/Wingdings).
 _VINETAS = {"\uf0b7", "\uf0a7", "\uf0d8", "\u2022", "\u25cf", "\u25cb", "\u25aa", "\u25a0", "\u25e6", "-", "o"}
@@ -60,7 +66,9 @@ _LARGO_ETIQUETA = 40
 
 
 def _es_etiqueta(texto: str) -> bool:
-    return texto.endswith(":") and len(texto) <= _LARGO_ETIQUETA
+    # Empieza con mayúscula: "constituido por:" es el final de una oración partida
+    # en dos líneas, no una etiqueta.
+    return texto.endswith(":") and len(texto) <= _LARGO_ETIQUETA and texto[:1].isupper()
 
 
 def _es_encabezado(segmento: str) -> bool:
@@ -69,6 +77,23 @@ def _es_encabezado(segmento: str) -> bool:
         return True  # "cada lobulillo está compuesto por:"
     return segmento.endswith(".") and len(segmento) <= _LARGO_ETIQUETA and len(segmento.split()) <= 4
 _FIN_ORACION = re.compile(r"(?<=[.!?])\s+")
+_LARGO_ENCABEZADO_LISTA = 120
+
+
+def _encabezado_de_lista(segmento: str, anterior: str) -> str:
+    """
+    Encabezado que una página siguiente necesita para ubicarse: una frase que
+    presenta una lista ("Desde la lámina basal hacia la luz tubular:") o una
+    etiqueta con su valor ("Hueso compacto: Células."). Si el segmento anterior es
+    un título corto ("Las células germinales."), va con él. "" si no es uno.
+    """
+    if len(segmento) > _LARGO_ENCABEZADO_LISTA:
+        return ""
+    if not (segmento.endswith(":") or (":" in segmento and _es_encabezado(segmento))):
+        return ""
+    if anterior and ":" not in anterior and _es_encabezado(anterior):
+        return f"{anterior} {segmento}"
+    return segmento
 
 
 def _segmentos(texto: str) -> List[str]:
@@ -143,8 +168,14 @@ def dividir_en_chunks(
     maximo: int = CHUNK_MAX,
     solapamiento: int = CHUNK_SOLAPAMIENTO,
     minimo: int = CHUNK_MIN,
+    contexto: Optional[dict] = None,
 ) -> List[str]:
-    """Chunks de una página, armados con segmentos enteros (ver docstring del módulo)."""
+    """
+    Chunks de una página, armados con segmentos enteros (ver docstring del módulo).
+
+    `contexto` lleva de una página a la siguiente el título de la práctica y el
+    último encabezado de lista; se actualiza al terminar la página.
+    """
     segmentos: List[str] = []
     for seg in _segmentos(texto):
         segmentos.extend(_partir_largo(seg, maximo) if len(seg) > maximo else [seg])
@@ -153,7 +184,23 @@ def dividir_en_chunks(
     actual: List[str] = []
     largo = 0
     solo_solape = False  # el chunk en curso tiene solo segmentos repetidos
-    titulo = ""  # título de la ficha o práctica en curso ("Imagen 1: ...")
+    contexto = contexto if contexto is not None else {}
+    practica = contexto.get("practica", "")  # "Práctica 12. HISTOLOGÍA DE ..."
+    encabezado = contexto.get("encabezado", "")  # último encabezado de lista
+    titulo = practica  # título de la ficha o práctica en curso ("Imagen 1: ...")
+    en_ficha = False  # dentro de una ficha "Imagen N": sus etiquetas no son encabezados
+
+    if segmentos and not _INICIO_BLOQUE.match(segmentos[0]):
+        # La página continúa la anterior: arranca con su título y, si sigue la
+        # misma sección, con el encabezado de la lista que venía.
+        previo = [practica] if practica else []
+        if encabezado and not _INICIO_SECCION.match(segmentos[0]):
+            previo.append(encabezado)
+        if previo and sum(len(p) + 1 for p in previo) + len(segmentos[0]) <= maximo:
+            actual, solo_solape = previo, True
+            largo = sum(len(p) for p in previo) + len(previo) - 1
+    encabezado = ""
+    anterior = ""
 
     def cerrar():
         nonlocal actual, largo, solo_solape
@@ -172,6 +219,10 @@ def dividir_en_chunks(
                     actual, largo, solo_solape = [titulo], len(titulo), True
             if es_bloque:
                 titulo = seg if len(seg) <= solapamiento else ""
+                en_ficha = not seg.lower().startswith(("práctica", "practica"))
+                if not en_ficha:
+                    practica = titulo
+            encabezado = ""
         elif actual and largo + len(seg) + 1 > objetivo and (largo >= minimo or not entra):
             if len(actual) > 1 and _es_encabezado(actual[-1]):
                 # La frase que presenta una lista (o el nombre de lo que se
@@ -197,5 +248,10 @@ def dividir_en_chunks(
         actual.append(seg)
         largo += len(seg) + (1 if largo else 0)
         solo_solape = False
+        if not en_ficha and not (es_bloque or es_seccion):
+            encabezado = _encabezado_de_lista(seg, anterior) or encabezado
+        anterior = seg
     cerrar()
+    contexto["practica"] = practica
+    contexto["encabezado"] = "" if en_ficha else encabezado
     return chunks
