@@ -1308,8 +1308,9 @@ class AsistenteHistologiaQdrant:
         for pdf_path in glob.glob(os.path.join(directorio_pdfs, "*.pdf")):
             fuente = os.path.basename(pdf_path)
             paginas_texto = self._leer_pdf_por_paginas(pdf_path)
-            for num_pagina, texto_pag in paginas_texto.items():
-                chunks = self._chunks(texto_pag)
+            contexto_chunks: dict = {}  # título y encabezado que pasan de una página a la siguiente
+            for num_pagina, texto_pag in sorted(paginas_texto.items()):
+                chunks = self._chunks(texto_pag, contexto_chunks)
                 img_paths = img_por_pdf_pag.get((fuente, num_pagina), [])
                 for i, chunk in enumerate(chunks):
                     if not chunk.strip():
@@ -1427,8 +1428,8 @@ class AsistenteHistologiaQdrant:
             print(f"⚠️ Error leyendo por páginas {path}: {e}")
         return paginas
 
-    def _chunks(self, texto: str) -> List[str]:
-        return dividir_en_chunks(texto)
+    def _chunks(self, texto: str, contexto: Optional[dict] = None) -> List[str]:
+        return dividir_en_chunks(texto, contexto=contexto)
 
     # ── Public entry point ────────────────────────────────────────────────────
 
