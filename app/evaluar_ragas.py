@@ -66,9 +66,11 @@ GOLDEN_SET = [
     },
     {
         "question": "Como se organiza el tejido testicular humano adulto?",
-        "ground_truth": "El testiculo esta rodeado por tunica albuginea que emite tabiques y divide el organo en lobulillos. Cada lobulillo contiene tubulos seminiferos y tejido intersticial con vasos y celulas de Leydig.",
+        # Corregida (10/2026): el manual no nombra vasos en el intersticio, y el
+        # intersticio esta en la pagina 2.
+        "ground_truth": "Cada testiculo esta rodeado por una capsula gruesa de tejido fibromuscular, la tunica albuginea, desde la cual se proyectan tabiques que lo dividen en lobulillos. Cada lobulillo esta compuesto por tubulos seminiferos, formados por el epitelio seminifero (celulas germinales y celulas de Sertoli), y por el intersticio testicular que los rodea, constituido por tejido conectivo laxo y celulas de Leydig.",
         "fuente_esperada": "arch4.pdf",
-        "paginas_esperadas": [1],
+        "paginas_esperadas": [1, 2],
     },
     {
         "question": "Que celulas forman el epitelio seminifero del tubulo seminifero?",

@@ -27,7 +27,8 @@ Uso (desde app/; no necesita el servidor ni los modelos de visión):
 Si se corrigen referencias del golden set (evaluar_ragas.GOLDEN_SET) después de
 una corrida, --referencias-actuales vuelve a juzgar solo las preguntas cuya
 referencia cambió y copia los demás juicios de baseline-X-juez.jsonl; escribe
-baseline-X-juez-ref.jsonl, comparable con las corridas nuevas:
+baseline-X-juez-ref.jsonl, comparable con las corridas nuevas. Si después se
+corrige otra referencia, el mismo comando repite solo ese juicio:
     uv run python -m optimizacion.juez optimizacion/resultados/baseline-X.jsonl --referencias-actuales
 """
 
@@ -226,26 +227,48 @@ def _leer_jsonl(ruta: Path) -> List[dict]:
     return salida
 
 
+def _referencia_usada(juicio: dict, previos: Dict[int, dict], original: str) -> Optional[str]:
+    """
+    Referencia con la que se hizo un juicio de baseline-X-juez-ref.jsonl. Los
+    juicios anteriores a guardar el campo "referencia" no la tienen: si es una
+    copia del de baseline-X-juez.jsonl usó la del baseline; si no, se juzgó con
+    la corregida de ese momento (None: se da por vigente).
+    """
+    if "referencia" in juicio:
+        return juicio["referencia"]
+    previo = previos.get(juicio["indice"])
+    if previo and previo.get("fecha") == juicio.get("fecha"):
+        return original
+    return None
+
+
 def _actualizar_referencias(registros: List[dict], previos: Dict[int, dict], hechos: Dict[int, dict],
                             salida: Path) -> None:
     """Pone en cada registro la referencia actual del golden set. Las preguntas
-    cuya referencia no cambió reutilizan el juicio anterior (se copia a `salida`)."""
+    cuya referencia no cambió reutilizan el juicio anterior (se copia a `salida`);
+    un juicio de `salida` hecho con otra referencia se descarta y se repite."""
     from evaluar_ragas import GOLDEN_SET  # importa el pipeline: solo cuando hace falta
 
-    cambiadas = []
+    cambiadas, descartados = [], []
     for r in registros:
         item = GOLDEN_SET[r["indice"]] if r["indice"] < len(GOLDEN_SET) else None
         if not item or item["question"] != r["question"]:
             continue
-        if item["ground_truth"] != r["ground_truth"]:
-            r["ground_truth"] = item["ground_truth"]
+        original, actual = r["ground_truth"], item["ground_truth"]
+        r["ground_truth"] = actual
+        juicio = hechos.get(r["indice"])
+        if juicio is not None and _referencia_usada(juicio, previos, original) not in (None, actual):
+            del hechos[r["indice"]]
+            descartados.append(r["indice"])
+        if actual != original:
             cambiadas.append(r["indice"])
         elif r["indice"] in previos and r["indice"] not in hechos:
-            hechos[r["indice"]] = previos[r["indice"]]
+            hechos[r["indice"]] = {**previos[r["indice"]], "referencia": original}
             with open(salida, "a", encoding="utf-8") as f:
-                f.write(json.dumps(previos[r["indice"]], ensure_ascii=False) + "\n")
-    print(f"📝 Referencias cambiadas desde la corrida: {cambiadas or 'ninguna'} (se juzgan de nuevo); "
-          f"el resto se copia de {salida.name.replace('-juez-ref', '-juez')}")
+                f.write(json.dumps(hechos[r["indice"]], ensure_ascii=False) + "\n")
+    print(f"📝 Referencias cambiadas desde la corrida: {cambiadas or 'ninguna'}; el resto se copia de "
+          f"{salida.name.replace('-juez-ref', '-juez')}"
+          + (f". Juicios hechos con una referencia anterior (se repiten): {descartados}" if descartados else ""))
 
 
 async def correr(entrada: Path, limit: int, proveedor: Optional[str], modelo: Optional[str],
@@ -281,7 +304,8 @@ async def correr(entrada: Path, limit: int, proveedor: Optional[str], modelo: Op
             continue
         juicio.update({
             "indice": registro["indice"], "trace_id": registro["traza"]["trace_id"],
-            "fuente_esperada": registro.get("fuente_esperada"), "juez": nombre_juez,
+            "fuente_esperada": registro.get("fuente_esperada"), "referencia": registro["ground_truth"],
+            "juez": nombre_juez,
             "fecha": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         })
         with open(salida, "a", encoding="utf-8") as f:

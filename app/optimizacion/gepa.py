@@ -9,7 +9,8 @@ mejores de la instrucción a partir de esas críticas.
   instrucción inicial es la parte estática del prompt actual (src/prompts.py).
 - Datos: un baseline de optimizacion/baseline.py. De cada registro se toma la
   pregunta, el contexto que el LLM vio en producción y la respuesta de
-  referencia. Solo consultas de texto con contexto suficiente (las demás no
+  referencia actual del golden set (si se corrigió después de la corrida, la
+  corregida). Solo consultas de texto con contexto suficiente (las demás no
   pasan por el LLM de respuesta).
 - Referencias del docente (opcional): --ejemplos-docente con
   [{"question": "...", "professor_response": "..."}] reemplaza la respuesta de
@@ -212,6 +213,20 @@ def _truncar_contexto(contexto: str) -> str:
     return contexto
 
 
+def usar_referencias_actuales(registros: List[dict]) -> List[int]:
+    """Reemplaza la referencia guardada en cada registro por la actual del golden
+    set. Devuelve los índices cuya referencia cambió desde la corrida."""
+    from evaluar_ragas import GOLDEN_SET  # importa el pipeline: solo cuando hace falta
+
+    cambiadas = []
+    for r in registros:
+        item = GOLDEN_SET[r["indice"]] if r["indice"] < len(GOLDEN_SET) else None
+        if item and item["question"] == r["question"] and item["ground_truth"] != r["ground_truth"]:
+            r["ground_truth"] = item["ground_truth"]
+            cambiadas.append(r["indice"])
+    return cambiadas
+
+
 def cargar_ejemplos_docente(ruta: Optional[Path]) -> Dict[str, str]:
     if not ruta:
         return {}
@@ -393,6 +408,9 @@ def main() -> int:
     if not registros:
         print(f"❌ No hay registros en {args.baseline}")
         return 1
+    cambiadas = usar_referencias_actuales(registros)
+    if cambiadas:
+        print(f"📝 Referencias corregidas en el golden set desde la corrida (se usa la actual): {cambiadas}")
     docentes = cargar_ejemplos_docente(args.ejemplos_docente)
     ejemplos, descartes = construir_ejemplos(registros, docentes)
     n_docente = sum(1 for e in ejemplos if e.origen_referencia == "docente")

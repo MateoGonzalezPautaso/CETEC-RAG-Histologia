@@ -434,7 +434,9 @@ uv run python -m optimizacion.inspeccionar optimizacion/resultados/baseline-v4.j
 Si se corrigen referencias o páginas esperadas del golden set, las corridas anteriores se vuelven a
 medir sin correr el pipeline: `juez --referencias-actuales` juzga de nuevo solo las preguntas cuya
 referencia cambió (copia el resto) y escribe `baseline-X-juez-ref.jsonl`; `baseline --recalcular-recall`
-recalcula el recall con las páginas actuales y escribe `baseline-X-resumen-ref.json`.
+recalcula el recall con las páginas actuales y escribe `baseline-X-resumen-ref.json`. Si después se
+corrige otra referencia, el mismo comando repite solo ese juicio. `gepa.py` también usa la referencia
+actual de cada pregunta, no la que quedó guardada en el baseline.
 
 Para elegir el peso coseno/BM25 de la búsqueda de texto (`HIBRIDA_PESO_VECTOR`) sin gastar cuota,
 `recuperacion.py` mide recall fuente+página@5 de la búsqueda sola con varios pesos (1.0 = solo
