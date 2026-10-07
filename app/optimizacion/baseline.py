@@ -16,6 +16,11 @@ Uso (desde app/, con el servidor DETENIDO: Qdrant local no admite dos procesos):
     uv run python -m optimizacion.baseline                  # golden set completo
     uv run python -m optimizacion.baseline --limit 3        # prueba rápida
     uv run python -m optimizacion.baseline --salida optimizacion/resultados/baseline-X.jsonl
+
+Si se corrigen las páginas esperadas del golden set después de una corrida,
+--recalcular-recall recalcula el recall de baseline-X.jsonl con las actuales,
+sin correr el pipeline, y escribe baseline-X-resumen-ref.json:
+    uv run python -m optimizacion.baseline --salida optimizacion/resultados/baseline-X.jsonl --recalcular-recall
 """
 
 import argparse
@@ -149,12 +154,39 @@ async def correr(limit: int, salida: Path) -> int:
     return 0 if len(registros) == len(golden) else 1
 
 
+def recalcular_recall(salida: Path) -> int:
+    """Recall y fuente dominante con las páginas esperadas actuales del golden set."""
+    hechos = _cargar_hechos(salida)
+    if not hechos:
+        print(f"❌ No hay registros en {salida}")
+        return 1
+    registros = []
+    for i in sorted(hechos):
+        reg = hechos[i]
+        if i < len(GOLDEN_SET) and GOLDEN_SET[i]["question"] == reg["question"]:
+            reg = construir_registro(i, GOLDEN_SET[i], reg["traza"], reg["run_id"])
+        registros.append(reg)
+    resumen = resumir(registros)
+    resumen["generado"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    ruta = salida.with_name(salida.stem + "-resumen-ref.json")
+    ruta.write_text(json.dumps(resumen, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(json.dumps(resumen, ensure_ascii=False, indent=2))
+    print(f"\n💾 {ruta}")
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Baseline del pipeline sobre el golden set")
     parser.add_argument("--limit", type=int, default=0, help="Solo las primeras N preguntas (0 = todas)")
     parser.add_argument("--salida", type=Path, default=None,
                         help="Archivo JSONL de salida. Si existe, se retoma (default: uno nuevo con fecha)")
+    parser.add_argument("--recalcular-recall", action="store_true",
+                        help="No corre el pipeline: recalcula el recall de --salida con las páginas actuales")
     args = parser.parse_args()
+    if args.recalcular_recall:
+        if not args.salida:
+            parser.error("--recalcular-recall necesita --salida")
+        return recalcular_recall(args.salida.resolve())
     salida = args.salida or RESULTADOS_DIR / f"baseline-{time.strftime('%Y%m%d-%H%M%S')}.jsonl"
     if not salida.is_absolute():
         salida = Path(os.getcwd()) / salida

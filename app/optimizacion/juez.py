@@ -23,6 +23,12 @@ correr el mismo comando.
 Uso (desde app/; no necesita el servidor ni los modelos de visión):
     uv run python -m optimizacion.juez optimizacion/resultados/baseline-X.jsonl
     uv run python -m optimizacion.juez optimizacion/resultados/baseline-X.jsonl --limit 3
+
+Si se corrigen referencias del golden set (evaluar_ragas.GOLDEN_SET) después de
+una corrida, --referencias-actuales vuelve a juzgar solo las preguntas cuya
+referencia cambió y copia los demás juicios de baseline-X-juez.jsonl; escribe
+baseline-X-juez-ref.jsonl, comparable con las corridas nuevas:
+    uv run python -m optimizacion.juez optimizacion/resultados/baseline-X.jsonl --referencias-actuales
 """
 
 import argparse
@@ -220,12 +226,39 @@ def _leer_jsonl(ruta: Path) -> List[dict]:
     return salida
 
 
-async def correr(entrada: Path, limit: int, proveedor: Optional[str], modelo: Optional[str]) -> int:
+def _actualizar_referencias(registros: List[dict], previos: Dict[int, dict], hechos: Dict[int, dict],
+                            salida: Path) -> None:
+    """Pone en cada registro la referencia actual del golden set. Las preguntas
+    cuya referencia no cambió reutilizan el juicio anterior (se copia a `salida`)."""
+    from evaluar_ragas import GOLDEN_SET  # importa el pipeline: solo cuando hace falta
+
+    cambiadas = []
+    for r in registros:
+        item = GOLDEN_SET[r["indice"]] if r["indice"] < len(GOLDEN_SET) else None
+        if not item or item["question"] != r["question"]:
+            continue
+        if item["ground_truth"] != r["ground_truth"]:
+            r["ground_truth"] = item["ground_truth"]
+            cambiadas.append(r["indice"])
+        elif r["indice"] in previos and r["indice"] not in hechos:
+            hechos[r["indice"]] = previos[r["indice"]]
+            with open(salida, "a", encoding="utf-8") as f:
+                f.write(json.dumps(previos[r["indice"]], ensure_ascii=False) + "\n")
+    print(f"📝 Referencias cambiadas desde la corrida: {cambiadas or 'ninguna'} (se juzgan de nuevo); "
+          f"el resto se copia de {salida.name.replace('-juez-ref', '-juez')}")
+
+
+async def correr(entrada: Path, limit: int, proveedor: Optional[str], modelo: Optional[str],
+                 referencias_actuales: bool = False) -> int:
     registros = _ultimo_por_indice(_leer_jsonl(entrada))
     if limit > 0:
         registros = registros[:limit]
-    salida = entrada.with_name(entrada.stem + "-juez.jsonl")
+    sufijo = "-juez-ref" if referencias_actuales else "-juez"
+    salida = entrada.with_name(entrada.stem + sufijo + ".jsonl")
     hechos = {j["indice"]: j for j in _leer_jsonl(salida)}
+    if referencias_actuales:
+        previos = {j["indice"]: j for j in _leer_jsonl(entrada.with_name(entrada.stem + "-juez.jsonl"))}
+        _actualizar_referencias(registros, previos, hechos, salida)
 
     llm, nombre_juez = crear_llm_juez(proveedor, modelo)
     omitidos = [r["indice"] for r in registros if r["traza"].get("error")]
@@ -261,7 +294,7 @@ async def correr(entrada: Path, limit: int, proveedor: Optional[str], modelo: Op
     indices = {r["indice"] for r in registros}
     resumen = resumir([hechos[i] for i in sorted(hechos) if i in indices])
     resumen.update({"juez": nombre_juez, "omitidos_por_error": omitidos, "fallidos_esta_corrida": fallidos})
-    ruta_resumen = entrada.with_name(entrada.stem + "-juez-resumen.json")
+    ruta_resumen = entrada.with_name(entrada.stem + sufijo + "-resumen.json")
     ruta_resumen.write_text(json.dumps(resumen, ensure_ascii=False, indent=2), encoding="utf-8")
     print("\n" + "=" * 60 + "\n📊 RESUMEN JUEZ\n" + "=" * 60)
     print(json.dumps(resumen, ensure_ascii=False, indent=2))
@@ -276,8 +309,11 @@ def main() -> int:
     parser.add_argument("--proveedor", choices=sorted(MODELOS_POR_DEFECTO), default=None,
                         help="Proveedor del juez (default: JUEZ_PROVEEDOR o groq)")
     parser.add_argument("--modelo", default=None, help="Modelo del juez (default: JUEZ_MODELO o el del proveedor)")
+    parser.add_argument("--referencias-actuales", action="store_true",
+                        help="Juzga con las referencias actuales del golden set (solo rejuzga las que cambiaron)")
     args = parser.parse_args()
-    return asyncio.run(correr(args.entrada.resolve(), args.limit, args.proveedor, args.modelo))
+    return asyncio.run(correr(args.entrada.resolve(), args.limit, args.proveedor, args.modelo,
+                              args.referencias_actuales))
 
 
 if __name__ == "__main__":

@@ -90,21 +90,26 @@ GOLDEN_SET = [
     },
     {
         "question": "Como se describe la espermatogonia A oscura?",
-        "ground_truth": "La espermatogonia A oscura se localiza en la zona basal del epitelio seminifero y presenta cromatina mas condensada u oscura, en contraste con otros tipos de espermatogonias.",
+        # Corregida (10/2026): la referencia anterior ("cromatina mas condensada u
+        # oscura") contradecia al manual, que describe una rarefaccion central.
+        "ground_truth": "Las espermatogonias A oscuras son celulas germinales con forma de cupula, las primeras desde la lamina basal hacia la luz tubular, que se distinguen por una zona de rarefaccion de la cromatina ubicada en el centro del nucleo.",
         "fuente_esperada": "arch4.pdf",
-        "paginas_esperadas": [6],
+        "paginas_esperadas": [1, 6],
     },
     {
         "question": "Que son las celulas peritubulares o mioides del tubulo seminifero?",
-        "ground_truth": "Las celulas peritubulares o mioides forman parte de la pared del tubulo seminifero junto con la membrana basal y fibras colagenas; tienen rasgos intermedios entre miofibroblastos y celulas musculares lisas, con filamentos de actina y miosina que les dan capacidad contractil.",
+        # Corregida (10/2026): actina, miosina y capacidad contractil no estan en el manual.
+        "ground_truth": "Las celulas peritubulares o mioides son celulas alargadas con caracteristicas de miofibroblastos que, junto con la lamina basal del epitelio y las fibras colagenas, constituyen la pared del tubulo seminifero.",
         "fuente_esperada": "arch4.pdf",
-        "paginas_esperadas": [14],
+        "paginas_esperadas": [2, 14],
     },
     {
         "question": "Que componentes se encuentran en el intersticio testicular?",
-        "ground_truth": "El intersticio testicular contiene tejido conectivo laxo, vasos sanguineos y celulas intersticiales de Leydig localizadas entre los tubulos seminiferos.",
+        # Corregida (10/2026): los vasos sanguineos no figuran en el manual, y la
+        # descripcion del intersticio esta en la pagina 2, no en la 1.
+        "ground_truth": "Alrededor de los tubulos seminiferos, el intersticio testicular esta constituido por un estroma de tejido conectivo laxo y por las celulas de Leydig o intersticiales: celulas poliedricas grandes y agrupadas, con nucleo central, cromatina laxa, nucleolo evidente y citoplasma acidofilo con inclusiones lipidicas.",
         "fuente_esperada": "arch4.pdf",
-        "paginas_esperadas": [1, 15],
+        "paginas_esperadas": [2, 15],
     },
     # ── arch2 (Sprint 1/2: cartílago, hueso, músculo, tejido nervioso) ──
     # Recuperadas del golden set del notebook v4.2. Van al final para que
@@ -165,9 +170,11 @@ GOLDEN_SET = [
     },
     {
         "question": "Que es la osteona y que estructuras la componen?",
-        "ground_truth": "La osteona es la unidad estructural del hueso compacto, formada por laminas concentricas alrededor del conducto de Havers.",
+        # Corregida (10/2026): el manual no define la osteona; la referencia
+        # anterior venia de un libro de texto. Se espera que el asistente lo diga.
+        "ground_truth": "El manual no define la osteona ni describe sus componentes: la nombra entre las estructuras que el alumno debe identificar en el microscopio en la practica de tejido oseo (junto con el endostio, el periostio, los osteocitos, los osteoclastos y los conductos de Havers y de Volkmann) y la senala en la laminilla Hueso lijado 81 (Imagen 12.1).",
         "fuente_esperada": "arch2.pdf",
-        "paginas_esperadas": [10],
+        "paginas_esperadas": [9, 10],
     },
     {
         # El manual no explica la diferencia: solo nombra ambos conductos. La
