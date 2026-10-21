@@ -69,9 +69,17 @@ class ExtractorImagenesPDF:
         return image.resize((new_w, new_h), self.config.RESAMPLING_ALGORITHM)
 
     def _fallback_render_page(self, pdf_path: str, page_num: int) -> Optional[Image.Image]:
+        # PyMuPDF renderiza la página sin depender de Poppler (que en Windows no
+        # suele estar instalado); pdf2image queda como segunda opción.
+        try:
+            print(f"  🔄 Fallback: rendering page {page_num} with PyMuPDF")
+            with fitz.open(pdf_path) as doc:
+                pix = doc[page_num - 1].get_pixmap(dpi=self.config.FALLBACK_DPI)
+                return Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+        except Exception as e:
+            print(f"  ⚠️ PyMuPDF no pudo renderizar la página {page_num}: {e}")
         try:
             from pdf2image import convert_from_path
-            print(f"  🔄 Fallback: rendering page {page_num} with pdf2image")
             pages = convert_from_path(pdf_path, first_page=page_num, last_page=page_num, dpi=self.config.FALLBACK_DPI)
             return pages[0] if pages else None
         except Exception as e:
@@ -225,11 +233,15 @@ class ExtractorTemario:
         self.temas: List[str] = []
 
     @staticmethod
-    def _muestra_representativa(texto: str, presupuesto: int = 24000, ventanas: int = 6) -> str:
+    def _muestra_representativa(texto: str, presupuesto: int = 12000, ventanas: int = 6) -> str:
         """
         Sample evenly-spaced windows across the whole corpus instead of only the
         first N characters, so the syllabus reflects the entire manual (not just
         the opening pages of the first PDF).
+
+        12000 caracteres son ~4000 tokens: entra en el límite de tokens de
+        entrada por minuto del plan gratuito de Groq (7000 para Qwen 3.8 27B).
+        Con 24000 (~7800 tokens) la llamada se rechazaba con un 413.
         """
         if len(texto) <= presupuesto:
             return texto
@@ -348,10 +360,29 @@ class ExtractorEntidades:
             texto_resp = re.sub(r"```json\s*|\s*```", "", resp.content.strip())
             resultado = json.loads(texto_resp)
             reglas = self._extraer_reglas(texto)
+            texto_norm = _normalizar(texto)
+            # Nombres que las reglas ya ubicaron en otra categoría (p. ej.
+            # "arteria muscular" es un órgano, no un tejido).
+            ya_clasificados = {_normalizar(v) for k in ("dominios", "organos", "celulas", "temas")
+                               for v in reglas.get(k, [])}
+
+            def anclados(items):
+                # Solo entidades que están en el texto: el LLM a veces agrega
+                # términos inferidos ("tejido conectivo" para una arteria) que
+                # la búsqueda por keywords puntúa como coincidencia exacta y
+                # traen chunks de otros temas. Así la recuperación no depende
+                # de qué tan "creativo" sea el modelo generador.
+                salida = []
+                for item in items[:3]:
+                    item_norm = _normalizar(item).strip()
+                    if item_norm and item_norm in texto_norm and item_norm not in ya_clasificados:
+                        salida.append(str(item).lower())
+                return salida
+
             return {
-                "tejidos": self._merge_unicos([t.lower() for t in resultado.get("tejidos", [])[:3]], reglas.get("tejidos", [])),
-                "estructuras": self._merge_unicos([e.lower() for e in resultado.get("estructuras", [])[:3]], reglas.get("estructuras", [])),
-                "tinciones": self._merge_unicos([t.lower() for t in resultado.get("tinciones", [])[:3]], reglas.get("tinciones", [])),
+                "tejidos": self._merge_unicos(anclados(resultado.get("tejidos", [])), reglas.get("tejidos", [])),
+                "estructuras": self._merge_unicos(anclados(resultado.get("estructuras", [])), reglas.get("estructuras", [])),
+                "tinciones": self._merge_unicos(anclados(resultado.get("tinciones", [])), reglas.get("tinciones", [])),
                 "dominios": reglas.get("dominios", []),
                 "organos": reglas.get("organos", []),
                 "celulas": reglas.get("celulas", []),

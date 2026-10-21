@@ -15,7 +15,7 @@
   <img src="https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white" alt="FastAPI">
   <img src="https://img.shields.io/badge/LangGraph-1C3C3C?logo=langchain&logoColor=white" alt="LangGraph">
   <img src="https://img.shields.io/badge/Qdrant-DC244C?logo=qdrant&logoColor=white" alt="Qdrant">
-  <img src="https://img.shields.io/badge/LLM-Llama_4_Scout_(Groq)-F55036" alt="Groq">
+  <img src="https://img.shields.io/badge/LLM-Qwen_3.8_27B_(Groq)-F55036" alt="Groq">
   <img src="https://img.shields.io/badge/License-MIT-green" alt="MIT">
 </p>
 
@@ -62,7 +62,7 @@ Proyecto desarrollado en el **CETEC UBATIC** (Facultad de Ingeniería, Universid
 | **Equipo (Grupo 2)** | Mateo Gonzalez Pautaso · Alén Calandria |
 | **Período** | 9 de febrero – 29 de junio de 2026 |
 
-**Stack:** FastAPI · LangGraph · Qdrant · Groq (Llama-4-Scout) · MiniLM · UNI/PLIP · frontend web
+**Stack:** FastAPI · LangGraph · Qdrant · Groq (Qwen 3.8 27B) · MiniLM · UNI/PLIP · frontend web
 
 ---
 
@@ -71,7 +71,7 @@ Proyecto desarrollado en el **CETEC UBATIC** (Facultad de Ingeniería, Universid
 - 🗣️ **Preguntas en lenguaje natural** sobre el manual, con respuestas **citadas** y trazables a la fuente.
 - 🖼️ **Multimodal**: subí una imagen histológica y preguntá sobre ella; el sistema la analiza con modelos de visión de patología.
 - 🔬 **Análisis comparativo imagen→imagen**: compara la imagen del usuario contra las imágenes de referencia del manual.
-- 🔎 **Búsqueda híbrida**: combina similitud semántica de texto, entidades (tejidos/tinciones/células), keywords y embeddings visuales.
+- 🔎 **Búsqueda híbrida**: en consultas de texto combina similitud semántica (MiniLM) y BM25 sobre todos los chunks; con imagen suma entidades (tejidos/tinciones/células) y embeddings visuales.
 - 🧭 **Clasificador de dominio**: descarta consultas que no son de histología antes de gastar recuperación/LLM.
 - 🧠 **Memoria por sesión**: recuerda el historial y la imagen activa entre turnos, aislada por usuario.
 - 📊 **Evaluación cuantitativa**: pipeline con RAGAS (recall@k, fidelidad) + smoke tests de confiabilidad.
@@ -124,7 +124,7 @@ flowchart TD
 | **Qdrant** (`qdrant_store.py`) | Base vectorial con vectores nombrados (texto / UNI / PLIP) |
 | **UNI + PLIP** (`embeddings.py`) | *Foundation models* de patología para embeddings de imagen |
 | **MiniLM** | Embeddings de texto (`all-MiniLM-L6-v2`) |
-| **Llama-4-Scout** vía Groq (`llm.py`) | LLM generador, con reintentos y manejo de cuota |
+| **Qwen 3.8 27B** vía Groq (`llm.py`, `claves.py`) | LLM generador multimodal, con reintentos, manejo de cuota y rotación de keys. Hasta la etapa 1 fue Llama-4-Scout, que Groq retiró del plan gratuito el 17/07/2026 |
 | **Clasificador** (`classifier.py`) | Filtro de dominio (similitud semántica + árbitro LLM) |
 | **Memoria** (`memory.py`) | Historial + imagen activa, por sesión |
 | **Extractores** (`extractors.py`) | PDF → texto/imágenes/temario + entidades |
@@ -172,8 +172,8 @@ La primera vez también crea un acceso directo **«RAG Histología»** en el esc
 |---|---|---|
 | Python 3.10+ | Ejecutar el backend | `python3 --version` |
 | [uv](https://docs.astral.sh/uv/) | Gestor de paquetes Python | `curl -LsSf https://astral.sh/uv/install.sh \| sh` |
-| Tesseract OCR | Extraer texto de imágenes en PDFs | `sudo apt install tesseract-ocr tesseract-ocr-spa` |
-| Poppler | Renderizar PDFs como imágenes | `sudo apt install poppler-utils` |
+| Tesseract OCR (opcional) | Texto OCR de las imágenes del manual. Sin Tesseract se indexa igual, sin ese texto | `sudo apt install tesseract-ocr tesseract-ocr-spa` |
+| Poppler (opcional) | Respaldo para renderizar páginas; por defecto se usa PyMuPDF | `sudo apt install poppler-utils` |
 
 > **Hardware:** no requiere GPU — corre en **CPU** por defecto (una GPU NVIDIA con CUDA solo acelera).
 > Recomendado **≥ 8 GB de RAM**. La primera ejecución descarga el modelo **UNI (~1.2 GB)** desde HuggingFace.
@@ -190,7 +190,8 @@ cp .env.example app/.env
 
 | Variable | Requerida | Descripción | Dónde obtenerla |
 |---|---|---|---|
-| `GROQ_API_KEY` | ✅ | LLM principal (Llama-4-Scout) | https://console.groq.com/keys |
+| `GROQ_API_KEY` | ✅ | LLM principal. Alcanza con esta o con `GROQ_API_KEYS` | https://console.groq.com/keys |
+| `GROQ_API_KEYS` | ❌ | Varias keys gratuitas separadas por comas (una por integrante). Se rotan ante límites de uso (429); `GROQ_API_KEY` se suma al pool | https://console.groq.com/keys |
 | `HF_TOKEN` | ✅ | Descarga modelos UNI y PLIP — requiere aceptar los términos del modelo | https://huggingface.co/settings/tokens |
 | `QDRANT_PATH` | ❌ | Carpeta local persistente de Qdrant. Por defecto: `./qdrant_data` | No aplica |
 | `QDRANT_URL` | ❌ | URL de Qdrant remoto (Cloud). **Dejar VACÍO para usar la base local** — un valor placeholder/inválido hace fallar la conexión con un error de DNS | https://cloud.qdrant.io/ |
@@ -199,6 +200,10 @@ cp .env.example app/.env
 | `ALLOWED_ORIGINS` | ❌ | Orígenes CORS permitidos (lista separada por comas, o `*`). Por defecto solo `localhost`/`127.0.0.1` | No aplica |
 | `MAX_IMAGE_MB` | ❌ | Tamaño máximo (MB) de imágenes subidas por el chat. Por defecto: `8` | No aplica |
 | `IMG_RERANK_UMBRAL` | ❌ | Umbral de similitud caption↔consulta para mostrar imágenes del manual. Por defecto: `0.35`. Subilo si aparecen imágenes poco relevantes | No aplica |
+| `TRAZAS_HABILITADAS` | ❌ | Registrar cada interacción en `TRAZAS_DIR` (ver [Trazas](#trazas-de-interacción)). Por defecto: `true` | No aplica |
+| `TRAZAS_DIR` | ❌ | Carpeta de las trazas JSONL. Por defecto: `./trazas` (dentro de `app/`) | No aplica |
+| `PROMPTS_OPTIMIZADOS` | ❌ | Usar el prompt de respuesta optimizado por GEPA (ver [Optimización](#optimización-del-prompt-con-dspy-gepa-etapa-2)). Por defecto: `false` | No aplica |
+| `PROMPTS_OPTIMIZADOS_PATH` | ❌ | Archivo del prompt optimizado. Por defecto: `./optimizacion/optimized_prompts.json` | No aplica |
 
 ---
 
@@ -206,12 +211,16 @@ cp .env.example app/.env
 
 El servidor usa los PDFs versionados en `data/pdf/`. Si se agregan PDFs en `app/pdf/`, esos tienen prioridad. Al iniciar, el servidor:
 
-1. Lee el texto de los PDFs y lo divide en chunks.
+1. Lee el texto de los PDFs y lo divide en chunks por página (`chunking.py`): cada chunk junta oraciones, ítems de lista y líneas de ficha enteras (hasta 850 caracteres), y las fichas de imagen («Imagen N»), los títulos de práctica y sus secciones (Objetivos, Materiales, Procedimiento…) empiezan un chunk nuevo. Cuando una página continúa la anterior, sus chunks arrancan con el título de la práctica y, si sigue una lista, con su encabezado (p. ej. «Hueso compacto: Células.» en la página de los osteocitos).
 2. Extrae las imágenes de cada página.
 3. Genera embeddings de texto (MiniLM), visuales (UNI, PLIP) e indexa todo en Qdrant local.
 4. Extrae el temario automáticamente del contenido.
 
-El indexado se saltea solo si las colecciones de Qdrant ya están pobladas **y** existe la marca de indexación completa (`app/.qdrant_index_complete`). Si una indexación previa quedó incompleta —por una interrupción o porque algún ítem falló al indexarse— la marca no se escribe y el sistema reindexa automáticamente en el próximo arranque (los upserts son idempotentes). Para forzar una reindexación manual: borrar `app/.qdrant_index_complete` y, si se quiere empezar desde cero, borrar también `app/qdrant_data/`.
+> **No agregar PDFs que repitan contenido de otros** (por ejemplo, una concatenación de los manuales):
+> se indexan todos los `*.pdf` de la carpeta, así que cada página quedaría duplicada con otra fuente.
+> Por eso `histologia_completo.pdf`, que usan los notebooks, vive en `notebooks/data/` y no en `data/pdf/`.
+
+El indexado se saltea solo si las colecciones de Qdrant ya están pobladas **y** existe la marca de indexación completa (`app/.qdrant_index_complete`). Si una indexación previa quedó incompleta —por una interrupción o porque algún ítem falló al indexarse— la marca no se escribe y el sistema reindexa automáticamente en el próximo arranque (los upserts son idempotentes). La marca guarda además la versión del chunking (`CHUNKING_VERSION`): si cambia, el próximo arranque vacía la colección de chunks y reindexa, sin que quede ningún chunk de la versión anterior. Para forzar una reindexación manual: borrar `app/.qdrant_index_complete` y, si se quiere empezar desde cero, borrar también `app/qdrant_data/`.
 
 ---
 
@@ -252,7 +261,7 @@ Cada consulta pasa por un grafo de nodos LangGraph (ver [Arquitectura](#arquitec
 2. **procesar_imagen** — si hay imagen nueva, genera embeddings UNI y PLIP; si no hay imagen nueva pero había una en el turno anterior, la reutiliza.
 3. **clasificar** — verifica que la consulta sea sobre histología usando similitud semántica y, si está cerca del umbral, un árbitro LLM.
 4. **generar_consulta** — reformula la pregunta para mejorar el retrieval, extrae entidades (tejidos, tinciones, células, etc.).
-5. **buscar_qdrant** — búsqueda híbrida: texto semántico + entidades + keyword + captions de imagen + embeddings visuales.
+5. **buscar_qdrant** — búsqueda híbrida. Sin imagen: puntaje de cada chunk = `HIBRIDA_PESO_VECTOR` (0.5) × coseno + el resto × BM25 normalizado (un término raro como "osteona" o "laringe 43" decide el orden), más captions de imagen si la consulta es visual. Con imagen: texto semántico + entidades + embeddings visuales UNI/PLIP.
 6. **filtrar_contexto** — descarta resultados por debajo del umbral de similitud y limita a 6 bloques de contexto.
 7. **analisis_comparativo** — si hay imagen del usuario, la compara contra imágenes del manual.
 8. **generar_respuesta** — sintetiza la respuesta con el LLM usando el contexto recuperado.
@@ -276,18 +285,23 @@ Cada consulta pasa por un grafo de nodos LangGraph (ver [Arquitectura](#arquitec
 │   │   ├── assistant.py       # Orquestador principal: grafo LangGraph + todos los nodos
 │   │   ├── graph.py           # AgentState: estado compartido entre nodos
 │   │   ├── config.py          # Constantes, rutas, anclas semánticas, reglas de entidades
+│   │   ├── chunking.py        # División de cada página en chunks por oraciones y fichas
+│   │   ├── claves.py          # Rotación de API keys de Groq (GROQ_API_KEYS)
 │   │   ├── llm.py             # Wrappers de LLM con reintentos y manejo de cuota
 │   │   ├── embeddings.py      # Wrappers PLIP y UNI para embeddings de imagen
 │   │   ├── qdrant_store.py    # Cliente Qdrant: esquema, upsert y búsqueda híbrida
 │   │   ├── memory.py          # Memoria semántica: historial + imagen activa por sesión
 │   │   ├── classifier.py      # Clasificador de dominio histológico (embeddings + LLM)
-│   │   └── extractors.py      # Extractor de imágenes PDF, temario y entidades
+│   │   ├── extractors.py      # Extractor de imágenes PDF, temario y entidades
+│   │   ├── prompts.py         # Prompt de respuesta optimizable (carga optimized_prompts.json)
+│   │   └── trazas.py          # Registro de trazas de interacción (JSONL)
 │   │
 │   ├── client/                # Frontend web (HTML + JS + CSS, sin frameworks)
 │   │   ├── index.html
 │   │   ├── app.js
 │   │   └── style.css
 │   │
+│   ├── optimizacion/          # Etapa 2: modelos.py, baseline.py, juez.py, gepa.py (DSPy GEPA), comparar.py, inspeccionar.py y recuperacion.py
 │   ├── evaluar_ragas.py       # Evaluación RAGAS del pipeline
 │   ├── eval_reliability.py    # Smoke test de confiabilidad
 │   └── eval_set_basico.json   # Conjunto de preguntas de evaluación
@@ -295,12 +309,13 @@ Cada consulta pasa por un grafo de nodos LangGraph (ver [Arquitectura](#arquitec
 ├── data/pdf/                  # Manuales en PDF versionados
 ├── docs/                      # Informes por sprint, logs de tuning y resultados de evaluación
 ├── notebooks/                 # Notebooks de exploración y evaluación de chunk size
+│   └── data/                  # histologia_completo.pdf (arch2+3+4 concatenados, solo para notebooks)
 └── README.md
 ```
 
 > Carpetas generadas automáticamente en runtime (no versionadas): `app/imagenes_extraidas/`
-> (imágenes extraídas de los PDFs), `app/imagenes_chat/` (imágenes subidas por usuarios) y
-> `app/qdrant_data/` (base Qdrant local persistente).
+> (imágenes extraídas de los PDFs), `app/imagenes_chat/` (imágenes subidas por usuarios),
+> `app/qdrant_data/` (base Qdrant local persistente) y `app/trazas/` (trazas de interacción).
 
 ---
 
@@ -327,6 +342,115 @@ uv run python evaluar_ragas.py --no-ragas --indices 1,5,9
 
 No ejecutar RAGAS y el frontend en paralelo — compiten por cuota de modelos.
 
+### Trazas de interacción
+
+Cada consulta que llega a `/api/chat` se registra como una línea JSON en
+`app/trazas/trazas-AAAA-MM-DD.jsonl` (un archivo por día, UTC). Cada traza incluye la consulta
+original y reescrita, la clasificación de dominio, los resultados recuperados (fuente, página,
+similitud y texto), el contexto que recibió el LLM, la respuesta, la trayectoria por nodo, la
+duración y el error si lo hubo. La respuesta de `/api/chat` devuelve el `trace_id` correspondiente.
+
+El formato está definido en `app/src/trazas.py` (`construir_traza`); `leer_trazas()` las carga para
+armar datasets. Las trazas contienen las consultas de los usuarios, por eso no se versionan. Se
+desactivan con `TRAZAS_HABILITADAS=false`.
+
+### Baseline y LLM as a Judge (Etapa 2)
+
+Dos pasos separados, para que el pipeline y el juez no compitan por cuota y cada uno se pueda
+retomar si se corta (volver a correr el mismo comando continúa donde quedó):
+
+```bash
+cd app
+
+# 0. Verificar que las keys vean los modelos del proyecto (y que respondan)
+uv run python -m optimizacion.modelos --probar
+
+# 1. Baseline: corre el golden set por el pipeline (con el servidor DETENIDO:
+#    Qdrant local no admite dos procesos). Una sesión aislada por pregunta.
+uv run python -m optimizacion.baseline --limit 3          # prueba rápida
+uv run python -m optimizacion.baseline                    # las 32 preguntas
+#    → optimizacion/resultados/baseline-<fecha>.jsonl (+ -resumen.json)
+
+# 2. Juez: puntúa correccion, fidelidad, notacion y estilo_docente (1–5) + chequeo de citas.
+uv run python -m optimizacion.juez optimizacion/resultados/baseline-<fecha>.jsonl
+#    → baseline-<fecha>-juez.jsonl (+ -juez-resumen.json)
+```
+
+El modelo juez se elige con `JUEZ_PROVEEDOR` / `JUEZ_MODELO` (por defecto Groq
+`openai/gpt-oss-120b`). La dimensión `estilo_docente` usa una rúbrica genérica hasta contar con
+material de referencia de los docentes.
+
+### Optimización del prompt con DSPy GEPA (Etapa 2)
+
+`optimizacion/gepa.py` evoluciona la parte estática del prompt de respuesta en modo texto (reglas +
+estilo, ver `src/prompts.py`). Entrena con los registros del baseline (pregunta + contexto que vio el
+LLM + respuesta de referencia) y usa como métrica el mismo juez, con su feedback por dimensión.
+
+```bash
+cd app
+uv sync --group optim                     # instala DSPy (no se instala por defecto)
+
+# 3. Probar programa + juez sobre un ejemplo
+uv run python -m optimizacion.gepa optimizacion/resultados/baseline-completo.jsonl --dry-run
+
+# 4. Optimizar (light/medium/heavy o --max-metric-calls N)
+uv run python -m optimizacion.gepa optimizacion/resultados/baseline-completo.jsonl --budget light
+#    → optimizacion/resultados/gepa-<fecha>/optimized_prompts.json (+ módulo DSPy y logs)
+
+# Con respuestas de referencia del docente (clonación de estilo):
+uv run python -m optimizacion.gepa optimizacion/resultados/baseline-completo.jsonl \
+  --ejemplos-docente ejemplos_docente.json   # [{"question": "...", "professor_response": "..."}]
+```
+
+**Cuota en el plan gratuito de Groq.** `--budget light` son unas 420 evaluaciones (cada una, una
+llamada al generador y otra al juez), bastante más que lo que permite una sola key por día. Conviene
+cargar las keys del grupo en `GROQ_API_KEYS` (de cuentas distintas: Groq cuenta los límites por organización, así que dos keys de la misma cuenta comparten la cuota). Si igual se agota la cuota, `gepa.py` corta y **no guarda**
+el resultado (GEPA tomaría las llamadas fallidas como puntaje 0 y el prompt no valdría). Al volver a
+correr el mismo comando, DSPy reutiliza desde su caché las llamadas ya hechas y retoma casi donde quedó.
+La respuesta del generador se limita a `GEPA_MAX_TOKENS_TAREA` tokens (900): Groq rechaza los pedidos cuyo `max_tokens` supera el límite de tokens de salida por minuto del modelo (OTPM, 1000 para Qwen).
+
+El prompt optimizado **no se activa solo**. Para evaluarlo contra el baseline:
+
+```bash
+cp optimizacion/resultados/gepa-<fecha>/optimized_prompts.json optimizacion/optimized_prompts.json
+PROMPTS_OPTIMIZADOS=true uv run python -m optimizacion.baseline --salida optimizacion/resultados/baseline-gepa.jsonl
+uv run python -m optimizacion.juez optimizacion/resultados/baseline-gepa.jsonl
+uv run python -m optimizacion.comparar \
+  optimizacion/resultados/baseline-completo-juez.jsonl optimizacion/resultados/baseline-gepa-juez.jsonl \
+  --solo-val optimizacion/resultados/gepa-<fecha>/optimized_prompts.json
+```
+
+`--solo-val` compara solo las preguntas de validación (las que GEPA no usó para proponer cambios).
+Si el resultado mejora, se deja `PROMPTS_OPTIMIZADOS=true` en `app/.env`; cada traza registra qué
+prompt estaba activo (`prompt_respuesta`). El modo multimodal no se modifica.
+
+Para ver qué secciones del manual le llegaron al LLM en preguntas puntuales (y separar una falla de
+recuperación de una de generación), sin llamar a ningún modelo:
+
+```bash
+uv run python -m optimizacion.inspeccionar optimizacion/resultados/baseline-v4.jsonl 1 5 15
+```
+
+Si se corrigen referencias o páginas esperadas del golden set, las corridas anteriores se vuelven a
+medir sin correr el pipeline: `juez --referencias-actuales` juzga de nuevo solo las preguntas cuya
+referencia cambió (copia el resto) y escribe `baseline-X-juez-ref.jsonl`; `baseline --recalcular-recall`
+recalcula el recall con las páginas actuales y escribe `baseline-X-resumen-ref.json`. Si después se
+corrige otra referencia, el mismo comando repite solo ese juicio. `gepa.py` también usa la referencia
+actual de cada pregunta, no la que quedó guardada en el baseline.
+
+Para elegir el peso coseno/BM25 de la búsqueda de texto (`HIBRIDA_PESO_VECTOR`) sin gastar cuota,
+`recuperacion.py` mide recall fuente+página@5 de la búsqueda sola con varios pesos (1.0 = solo
+embeddings, 0.0 = solo BM25):
+
+```bash
+uv run python -m optimizacion.recuperacion --baseline optimizacion/resultados/baseline-v4.jsonl
+```
+
+El archivo usa el mismo formato que el agente de Física de
+[`dracero/a2a-test-alone`](https://github.com/dracero/a2a-test-alone)
+(`{"metadata", "prompts": {"direct_response": {"instruction", "demos"}}}`), para poder reutilizar el
+esquema en el orquestador BeAI.
+
 ---
 
 ## Documentación y recursos
@@ -337,6 +461,7 @@ Material complementario para entender el diseño, las decisiones y los resultado
 |---|---|
 | [Informe Técnico — Sprint 1](docs/Sprint%201/Informe_Tecnico_Sprint1_Grupo2.pdf) | Informe del primer sprint (objetivos, diseño inicial, resultados). |
 | [Informe Técnico — Sprint 2](docs/Sprint%202/Informe_Tecnico_Sprint2_Grupo2.pdf) | Informe del segundo sprint (multimodalidad, mejoras y evaluación). |
+| [Informe Técnico — Etapa 2](docs/Etapa%202/Informe_Tecnico_Etapa2_Grupo2.pdf) | Baseline sobre el golden set, LLM como juez, optimización del prompt con DSPy GEPA y mejora de la recuperación (chunking y búsqueda coseno + BM25). |
 | [`docs/retrieval_tuning_log.md`](docs/retrieval_tuning_log.md) | Bitácora de ajustes de recuperación para reducir ruido entre fuentes manteniendo recall. |
 | [`docs/vuelta_original_vs_actual.md`](docs/vuelta_original_vs_actual.md) | Comparativa entre la versión original y la actual del pipeline. |
 | [`docs/Sprint 2/reporte_diagnostico_imagenes.json`](docs/Sprint%202/reporte_diagnostico_imagenes.json) | Diagnóstico de la recuperación imagen→imagen. |
@@ -358,15 +483,20 @@ Material complementario para entender el diseño, las decisiones y los resultado
 - Verificar permisos de escritura en la carpeta `app/`.
 - Si se configuró `QDRANT_URL`, verificar también `QDRANT_KEY`.
 
+**`model_not_found` / `The model ... does not exist`**
+- Groq cambia los modelos del plan gratuito. Listá los disponibles para tus keys y probalos con
+  `uv run python -m optimizacion.modelos --probar`, y configurá otro en `app/.env` (`LLM_MODELO` para el
+  generador, que debe aceptar imágenes; `JUEZ_MODELO` para el juez).
+
 **El LLM responde "sin cuota"**
-- La cuota de Groq se resetea diariamente. Esperar o cambiar `GROQ_API_KEY`.
+- La cuota de Groq se resetea diariamente. Esperar, o cargar varias keys en `GROQ_API_KEYS` para que se roten solas (pipeline, juez y GEPA). Una key con límite diario queda en pausa 1 hora (`GROQ_COOLDOWN_DIARIO_S`) y una con límite por minuto, 60 s (`GROQ_COOLDOWN_MINUTO_S`).
 - El sistema bloquea automáticamente nuevas llamadas por 5 minutos tras detectar cuota agotada (configurable con `LLM_QUOTA_BLOCK_SECONDS`).
 
 **No aparecen imágenes del manual**
 - Verificar que los PDFs estén en `data/pdf/` o `app/pdf/` y que Qdrant tenga datos (`/api/status` muestra `n_temas > 0`).
 - **UNI debe haber cargado** (ver arriba): sin UNI no se indexan imágenes.
 - Si la respuesta sale solo en texto pese a haber imágenes relevantes, bajá `IMG_RERANK_UMBRAL` (por defecto `0.35`).
-- Tesseract y Poppler deben estar instalados para la extracción.
+- Sin Tesseract las imágenes se indexan sin texto OCR (afecta poco la búsqueda).
 
 ---
 

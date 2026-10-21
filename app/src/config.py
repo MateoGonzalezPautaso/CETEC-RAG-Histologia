@@ -9,6 +9,15 @@ import unicodedata
 # ── Thresholds ────────────────────────────────────────────────────────────────
 SIMILARITY_THRESHOLD = 0.70
 
+# Tope de caracteres de las secciones del manual en el prompt de respuesta (y en
+# la optimización con GEPA). Alcanza para 6 chunks de hasta CHUNK_MAX (850)
+# con sus encabezados; el juez lee los mismos 6000.
+MAX_CONTEXTO_PROMPT = 6000
+
+# Búsqueda de texto (consultas sin imagen): puntaje = peso × coseno (MiniLM)
+# + (1 − peso) × BM25 normalizado al mejor chunk. Ver qdrant_store.busqueda_densa_lexica.
+HIBRIDA_PESO_VECTOR = float(os.getenv("HIBRIDA_PESO_VECTOR", "0.5"))
+
 # ── Embedding dimensions ──────────────────────────────────────────────────────
 DIM_TEXTO = 384
 DIM_IMG_UNI = 1024
@@ -41,6 +50,39 @@ if _QDRANT_PATH_ENV:
     )
 else:
     QDRANT_PATH = os.path.join(_BASE, "qdrant_data")
+
+# ── Trazas de interacción (Etapa 2) ───────────────────────────────────────────
+# Cada consulta se registra como una línea JSON en TRAZAS_DIR, un archivo por
+# día (UTC). Son la materia prima para el dataset de evaluación/optimización.
+VERSION_PIPELINE = "5.0"
+TRAZAS_HABILITADAS = os.getenv("TRAZAS_HABILITADAS", "true").strip().lower() not in ("0", "false", "no")
+_TRAZAS_DIR_ENV = os.getenv("TRAZAS_DIR")
+if _TRAZAS_DIR_ENV:
+    TRAZAS_DIR = (
+        _TRAZAS_DIR_ENV if os.path.isabs(_TRAZAS_DIR_ENV)
+        else os.path.abspath(os.path.join(_BASE, _TRAZAS_DIR_ENV))
+    )
+else:
+    TRAZAS_DIR = os.path.join(_BASE, "trazas")
+
+# ── Modelo generador (Groq) ───────────────────────────────────────────────────
+# Groq retiró Llama-4-Scout del plan gratuito (17/07/2026). Qwen 3.8 27B es su
+# reemplazo multimodal (texto + imagen). Ver los modelos disponibles con:
+#   uv run python -m optimizacion.modelos
+LLM_MODELO = (os.getenv("LLM_MODELO") or "qwen/qwen3.8-27b").strip()
+
+# ── Prompts optimizados con DSPy GEPA (Etapa 2) ───────────────────────────────
+# Desactivado por defecto: el pipeline usa los prompts originales hasta que un
+# prompt optimizado se valide contra el baseline.
+PROMPTS_OPTIMIZADOS = os.getenv("PROMPTS_OPTIMIZADOS", "false").strip().lower() in ("1", "true", "yes", "si", "sí")
+_PROMPTS_PATH_ENV = os.getenv("PROMPTS_OPTIMIZADOS_PATH")
+if _PROMPTS_PATH_ENV:
+    PROMPTS_OPTIMIZADOS_PATH = (
+        _PROMPTS_PATH_ENV if os.path.isabs(_PROMPTS_PATH_ENV)
+        else os.path.abspath(os.path.join(_BASE, _PROMPTS_PATH_ENV))
+    )
+else:
+    PROMPTS_OPTIMIZADOS_PATH = os.path.join(_BASE, "optimizacion", "optimized_prompts.json")
 
 # ── Qdrant collections ────────────────────────────────────────────────────────
 COLLECTION_CHUNKS = "histo_chunks"
@@ -122,6 +164,20 @@ REGLAS_ENTIDADES = {
         "testiculo": ["testiculo", "testicular", "seminifero", "seminiferos",
                       "sertoli", "leydig", "espermatogonia", "espermatide",
                       "peritubular", "mioide"],
+        # arch2.pdf (prácticas 11 a 15). Sin estos dominios sus chunks pasaban
+        # el filtro de dominio de la búsqueda por keywords de cualquier consulta.
+        # Ninguno de estos patrones aparece en arch3.pdf ni arch4.pdf.
+        "cartilago": ["cartilag", "condrocito", "condroblasto", "pericondrio"],
+        "tejido oseo": ["hueso", "oseo", "osea", "osteocito", "osteoblasto", "osteoclasto",
+                        "osteona", "havers", "volkmann", "volckmann", "periostio",
+                        "endostio", "trabecula", "osificacion"],
+        # Sin la frase genérica "tejido muscular": "el tejido muscular liso de la
+        # túnica media" es una consulta de arterias, no de la práctica 13.
+        "tejido muscular": ["sarcomera", "miofibrilla", "estriado", "miocito",
+                            "sarcoplasm", "musculo esqueletico", "musculo cardiaco"],
+        "tejido nervioso": ["tejido nervioso", "neurona", "neuroglia", "astrocito",
+                            "oligodendrocito", "microglia", "ependim", "axon", "dendrita",
+                            "sinapsis", "schwann", "purkinje", "nissl"],
     },
     "organos": {
         "arteria muscular": ["arteria muscular"],
