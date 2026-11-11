@@ -4,6 +4,7 @@ LLM helpers: retry logic, quota management, LangSmith setup.
 
 import asyncio
 import os
+import re
 import time
 from typing import Optional
 
@@ -47,6 +48,19 @@ def _quota_message() -> str:
     )
 
 
+# ── Razonamiento visible ──────────────────────────────────────────────────────
+
+_THINK_RE = re.compile(r"<think>.*?(?:</think>|$)\s*", re.DOTALL | re.IGNORECASE)
+
+
+def _sin_razonamiento(resp):
+    """Quita bloques <think>…</think> si el modelo (Qwen) los deja en la respuesta."""
+    contenido = getattr(resp, "content", None)
+    if isinstance(contenido, str) and "<think>" in contenido.lower():
+        resp.content = _THINK_RE.sub("", contenido).strip()
+    return resp
+
+
 # ── Retry wrappers ────────────────────────────────────────────────────────────
 
 async def invoke_con_reintento(llm, messages, max_retries=None):
@@ -58,7 +72,7 @@ async def invoke_con_reintento(llm, messages, max_retries=None):
 
     for attempt in range(max_retries):
         try:
-            return await llm.ainvoke(messages)
+            return _sin_razonamiento(await llm.ainvoke(messages))
         except Exception as e:
             err_str = str(e)
             if _is_quota_error(e):
@@ -88,7 +102,7 @@ def invoke_con_reintento_sync(llm, messages, max_retries=None):
 
     for attempt in range(max_retries):
         try:
-            return llm.invoke(messages)
+            return _sin_razonamiento(llm.invoke(messages))
         except Exception as e:
             err_str = str(e)
             if _is_quota_error(e):

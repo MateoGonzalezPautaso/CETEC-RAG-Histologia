@@ -51,6 +51,13 @@ dependencies = [
     "datasets>=4.8.5",
 ]
 
+# Etapa 2 — optimización de prompts (optimizacion/gepa.py). No lo instala
+# `uv sync` por defecto; se agrega con `uv sync --group optim`.
+[dependency-groups]
+optim = [
+    "dspy>=3.0.0",
+]
+
 [tool.setuptools]
 packages = []
 
