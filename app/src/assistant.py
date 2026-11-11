@@ -536,6 +536,7 @@ class AsistenteHistologiaQdrant:
         if es_solo_texto and validos:
             validos = self._filtrar_por_fuente_dominante(validos, state)
             validos = sorted(validos, key=lambda x: x.get("similitud", 0), reverse=True)[:6]
+            validos = await self.qdrant_store.expandir_con_vecinos(validos)
 
         state["resultados_validos"] = validos
         tiene_imgs = len(state.get("imagenes_para_mostrar", [])) > 0
@@ -555,6 +556,8 @@ class AsistenteHistologiaQdrant:
 
         if validos:
             validos_sorted = sorted(validos, key=lambda x: x.get("similitud", 0), reverse=True)
+            # Un resultado unido al pasaje de otro (fragmentos vecinos) no repite su texto.
+            validos_sorted = [r for r in validos_sorted if r.get("texto_contexto", None) != ""]
             bloques = []
             for i, r in enumerate(validos_sorted, 1):
                 es_top_img = i == 1 and r.get("tipo") == "imagen"
@@ -566,7 +569,8 @@ class AsistenteHistologiaQdrant:
                 if r.get("imagen_path"):
                     enc += f" | Imagen: {os.path.basename(r['imagen_path'])}"
                 enc += "]"
-                bloques.append(f"{enc}\n{_safe(r.get('texto',''))[:CHUNK_MAX]}")
+                texto = _safe(r["texto_contexto"]) if r.get("texto_contexto") else _safe(r.get("texto", ""))[:CHUNK_MAX]
+                bloques.append(f"{enc}\n{texto}")
             state["contexto_documentos"] = "\n\n".join(bloques)
             modo_str = "TEXTO" if es_solo_texto else "IMAGEN+TEXTO"
             print(f"✅ {len(validos)} válidos | {len(imagenes_unicas)} imgs | Modo: {modo_str}")

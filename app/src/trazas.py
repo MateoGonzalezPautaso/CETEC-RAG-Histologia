@@ -41,6 +41,10 @@ def _resultados(resultados: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             "sim_vector": r.get("sim_vector"),
             "bm25": r.get("bm25"),
             "texto": r.get("texto"),
+            # Fragmentos vecinos sumados al contexto ([página, chunk]) o el
+            # resultado a cuyo pasaje se unió (qdrant_store.expandir_con_vecinos).
+            "vecinos": r.get("vecinos"),
+            "unido_a": r.get("unido_a"),
             "imagen": os.path.basename(img) if img else None,
         })
     return salida
