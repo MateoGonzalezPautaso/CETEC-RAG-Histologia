@@ -3,6 +3,7 @@ Qdrant vector store: schema creation, upsert, and all search strategies.
 """
 
 import asyncio
+import heapq
 import os
 import uuid
 from typing import Any, Dict, List, Optional
@@ -17,8 +18,10 @@ from .config import (
     COLLECTION_CHUNKS, COLLECTION_IMAGENES,
     DIM_IMG_PLIP, DIM_IMG_UNI, DIM_TEXTO, HIBRIDA_PESO_VECTOR,
     INDEX_PLIP, INDEX_TEXTO, INDEX_UNI, QDRANT_PATH,
+    VECINOS_DECAIMIENTO, VECINOS_EXTRA_CHARS, VECINOS_PESO_ATRAS,
     normalizar as _sin_tildes,
 )
+from .chunking import inicio_de_bloque, unir_chunks
 from .lexico import IndiceBM25
 from .llm import embed_query_con_reintento
 
@@ -353,18 +356,143 @@ class QdrantVectorStore:
             return []
 
     async def _corpus_chunks(self) -> dict:
-        """Chunks con su vector normalizado y el índice BM25 (en memoria, se rearma al cambiar la colección)."""
+        """
+        Chunks con su vector normalizado, el índice BM25 y el orden de lectura de
+        cada PDF (en memoria, se rearma al cambiar la colección).
+        """
         if self._corpus is None:
             puntos = [p for p in await self._scroll_all(COLLECTION_CHUNKS, with_vectors=True) if p.vector]
             matriz = np.asarray([p.vector for p in puntos], dtype=np.float32).reshape(len(puntos), -1)
             normas = np.linalg.norm(matriz, axis=1, keepdims=True)
             normas[normas == 0] = 1.0
+            orden: Dict[str, list] = {}
+            for p in puntos:
+                orden.setdefault(p.payload.get("fuente", ""), []).append(p)
+            posicion = {}
+            for fuente, lista in orden.items():
+                lista.sort(key=lambda p: (p.payload.get("pagina") or 0, p.payload.get("chunk_idx") or 0))
+                for k, p in enumerate(lista):
+                    posicion[str(p.id)] = (fuente, k)
             self._corpus = {
                 "puntos": puntos,
                 "matriz": matriz / normas,
                 "bm25": IndiceBM25([p.payload.get("texto", "") or "" for p in puntos]),
+                "orden": orden,
+                "posicion": posicion,
             }
         return self._corpus
+
+    async def expandir_con_vecinos(
+        self, resultados: list, extra_chars: Optional[int] = None,
+        decaimiento: float = VECINOS_DECAIMIENTO, peso_atras: float = VECINOS_PESO_ATRAS,
+    ) -> list:
+        """
+        Suma a cada resultado de texto los chunks vecinos del mismo PDF.
+
+        La respuesta a veces sigue en el chunk siguiente al que encontró la
+        búsqueda: "Tejido muscular estriado voluntario o esquelético." cierra un
+        chunk y su descripción abre el próximo; en el testículo, la túnica
+        albugínea está en el chunk anterior al de los lobulillos. Los vecinos
+        entran por prioridad (más cerca y de un resultado mejor ubicado primero)
+        hasta sumar extra_chars. Un vecino
+        no cruza a otro bloque: otra ficha de imagen u otra práctica.
+
+        No cambia la lista ni su orden (el recall se sigue midiendo sobre la
+        búsqueda): agrega a cada resultado `texto_contexto` (el pasaje unido) y
+        `vecinos` ([página, chunk] agregados). Si dos resultados quedan en
+        pasajes contiguos, se unen en el de mejor puntaje y el otro queda con
+        `texto_contexto` vacío y `unido_a`.
+        """
+        extra = VECINOS_EXTRA_CHARS if extra_chars is None else extra_chars
+        if extra <= 0 or not resultados:
+            return resultados
+        try:
+            corpus = await self._corpus_chunks()
+        except Exception as e:
+            print(f"⚠️ Error cargando chunks para los vecinos: {e}")
+            return resultados
+        orden, posicion = corpus["orden"], corpus["posicion"]
+
+        # Ventana [fuente, desde, hasta] de cada resultado que es un chunk indexado.
+        ventanas: Dict[int, list] = {}
+        ocupados = set()
+        for h, r in enumerate(resultados):
+            pos = posicion.get(str(r.get("id")))
+            if r.get("tipo") == "texto" and pos:
+                ventanas[h] = [pos[0], pos[1], pos[1]]
+                ocupados.add(pos)
+
+        # Prioridad de un vecino: decaimiento^(puesto del resultado + distancia), × peso_atras
+        # si está antes. Por puesto y no por similitud: la escala del puntaje cambia con la
+        # consulta (coseno + BM25 normalizado) y no debe decidir cuánto se expande el primero.
+        puestos = sorted(ventanas, key=lambda i: (-(resultados[i].get("similitud", 0) or 0), i))
+        candidatos = []
+        for puesto, h in enumerate(puestos):
+            heapq.heappush(candidatos, (-decaimiento ** (puesto + 1), puesto, h, 1))
+            if peso_atras > 0:
+                heapq.heappush(candidatos, (-decaimiento ** (puesto + 1) * peso_atras, puesto, h, -1))
+        gastado = 0
+        while candidatos:
+            neg, puesto, h, paso = heapq.heappop(candidatos)
+            fuente, desde, hasta = ventanas[h]
+            k = hasta + 1 if paso > 0 else desde - 1
+            if not 0 <= k < len(orden[fuente]):
+                continue
+            # El chunk que abre el bloque nuevo es el de más adelante: k al avanzar, desde al retroceder.
+            borde, otro = (k, hasta) if paso > 0 else (desde, k)
+            bloque = inicio_de_bloque(orden[fuente][borde].payload.get("texto", ""))
+            if bloque and bloque != inicio_de_bloque(orden[fuente][otro].payload.get("texto", "")):
+                continue
+            if (fuente, k) not in ocupados:
+                largo = len(orden[fuente][k].payload.get("texto", "") or "")
+                if gastado + largo > extra:
+                    continue
+                gastado += largo
+                ocupados.add((fuente, k))
+            # Si k ya es de otra ventana, esta se extiende hasta tocarla y se unen abajo.
+            ventanas[h][2 if paso > 0 else 1] = k
+            heapq.heappush(candidatos, (neg * decaimiento, puesto, h, paso))
+
+        # Unión de ventanas que se tocan; el pasaje queda en el resultado de mejor puntaje.
+        destino: Dict[int, int] = {}
+        grupos: list = []  # [fuente, desde, hasta, [resultados]]
+        for h in sorted(ventanas, key=lambda i: (ventanas[i][0], ventanas[i][1])):
+            fuente, desde, hasta = ventanas[h]
+            if grupos and grupos[-1][0] == fuente and desde <= grupos[-1][2] + 1:
+                grupos[-1][2] = max(grupos[-1][2], hasta)
+                grupos[-1][3].append(h)
+            else:
+                grupos.append([fuente, desde, hasta, [h]])
+        for fuente, desde, hasta, miembros in grupos:
+            mejor = min(miembros, key=lambda i: (-(resultados[i].get("similitud", 0) or 0), i))
+            ventanas[mejor] = [fuente, desde, hasta]
+            for h in miembros:
+                destino[h] = mejor
+
+        propios = {posicion[str(resultados[h].get("id"))] for h in ventanas}
+        salida = []
+        for h, r in enumerate(resultados):
+            if h not in ventanas:
+                salida.append(r)
+                continue
+            g = destino[h]
+            if g != h:
+                salida.append({**r, "texto_contexto": "", "unido_a": resultados[g].get("id")})
+                continue
+            fuente, desde, hasta = ventanas[h]
+            pasaje = orden[fuente][desde:hasta + 1]
+            salida.append({
+                **r,
+                "texto_contexto": unir_chunks([p.payload.get("texto", "") or "" for p in pasaje]),
+                "vecinos": [
+                    [p.payload.get("pagina"), p.payload.get("chunk_idx")]
+                    for k, p in enumerate(pasaje, desde) if (fuente, k) not in propios
+                ],
+            })
+        agregados = sum(len(r.get("vecinos") or []) for r in salida)
+        if agregados:
+            print(f"   🧩 Vecinos: +{agregados} chunks ({gastado} caracteres)")
+        return salida
 
     async def busqueda_densa_lexica(
         self, embedding: Optional[list], consulta: str, top_k: int = 10, peso_vector: Optional[float] = None,

@@ -255,3 +255,28 @@ def dividir_en_chunks(
     contexto["practica"] = practica
     contexto["encabezado"] = "" if en_ficha else encabezado
     return chunks
+
+
+def inicio_de_bloque(texto: str) -> str:
+    """Primera línea del chunk si abre una ficha de imagen o una práctica ("Imagen 4_ ...",
+    "Práctica 13. ..."); si no, ""."""
+    primera = (texto or "").strip().split("\n", 1)[0].strip()
+    return primera if _INICIO_BLOQUE.match(primera) else ""
+
+
+def unir_chunks(textos: List[str]) -> str:
+    """
+    Une chunks contiguos de un mismo PDF en un solo pasaje. Cada chunk empieza
+    repitiendo líneas del anterior (el título de la práctica, el solapamiento o
+    el encabezado de una lista): esas líneas iniciales se saltean si ya están
+    en lo unido hasta ahí.
+    """
+    lineas = [l for l in (textos[0] if textos else "").split("\n")]
+    for texto in textos[1:]:
+        vistas = {l.strip() for l in lineas if l.strip()}
+        nuevas = texto.split("\n")
+        k = 0
+        while k < len(nuevas) and (not nuevas[k].strip() or nuevas[k].strip() in vistas):
+            k += 1
+        lineas += nuevas[k:]
+    return "\n".join(lineas)

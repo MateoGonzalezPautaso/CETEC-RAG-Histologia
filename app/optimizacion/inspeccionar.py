@@ -5,8 +5,9 @@ Sirve para separar fallas de recuperación (el dato no estaba en las secciones
 del manual) de fallas de generación (estaba y el modelo no lo usó). No llama a
 ningún modelo: solo lee el JSONL del baseline y, si existe, el del juez.
 
-Por pregunta imprime los resultados válidos (fuente, página, similitud y el
-principio del texto, con ✔ en las páginas esperadas), qué fracción de las
+Por pregunta imprime los resultados válidos (fuente, página, similitud, los
+fragmentos vecinos que se le sumaron y el principio del texto, con ✔ en las
+páginas esperadas), qué fracción de las
 palabras de la referencia aparece en el contexto, la respuesta y la
 justificación del juez en corrección.
 
@@ -32,7 +33,7 @@ _STOP = {
 }
 
 
-def _palabras(texto: str) -> set:
+def palabras_clave(texto: str) -> set:
     return {
         p for p in (w.strip(".,;:()[]\"'¿?¡!") for w in normalizar(texto or "").split())
         if len(p) > 3 and p not in _STOP
@@ -65,10 +66,14 @@ def mostrar(reg: dict, juicio: Optional[dict]) -> None:
         marca = "✔" if (r.get("fuente"), r.get("pagina")) in esperadas else " "
         texto = " ".join((r.get("texto") or "").split())
         partes = "" if r.get("bm25") is None else f" (coseno={r['sim_vector']:.2f} bm25={r['bm25']:.2f})"
+        if r.get("vecinos"):
+            partes += " +vecinos " + ", ".join(f"p{p}c{c}" for p, c in r["vecinos"])
+        if r.get("unido_a"):
+            partes += " (unido a otro pasaje)"
         print(f"   {marca} {i}. {r.get('fuente')} p{r.get('pagina')} {r.get('tipo')} "
               f"sim={r.get('similitud', 0):.2f}{partes} | {texto[:110]}")
-    ref = _palabras(reg.get("ground_truth", ""))
-    ctx = _palabras(rec.get("contexto_documentos") or "")
+    ref = palabras_clave(reg.get("ground_truth", ""))
+    ctx = palabras_clave(rec.get("contexto_documentos") or "")
     if ref:
         faltan = sorted(ref - ctx)
         print(f"   referencia en el contexto: {len(ref & ctx)}/{len(ref)} palabras"

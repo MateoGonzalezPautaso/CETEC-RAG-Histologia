@@ -11,8 +11,19 @@ SIMILARITY_THRESHOLD = 0.70
 
 # Tope de caracteres de las secciones del manual en el prompt de respuesta (y en
 # la optimización con GEPA). Alcanza para 6 chunks de hasta CHUNK_MAX (850)
-# con sus encabezados; el juez lee los mismos 6000.
-MAX_CONTEXTO_PROMPT = 6000
+# con sus encabezados más VECINOS_EXTRA_CHARS de fragmentos vecinos; el juez
+# lee el mismo contexto.
+MAX_CONTEXTO_PROMPT = 8000
+
+# Fragmentos vecinos (consultas sin imagen): a los resultados de texto se les
+# suman los chunks que los siguen o preceden en el PDF, hasta
+# VECINOS_EXTRA_CHARS caracteres en total (0 = desactivado). La prioridad de un
+# vecino es VECINOS_DECAIMIENTO^(puesto del resultado + distancia), por
+# VECINOS_PESO_ATRAS si está antes del resultado: entran primero los que siguen
+# a los mejores resultados. Ver qdrant_store.expandir_con_vecinos.
+VECINOS_EXTRA_CHARS = int(os.getenv("VECINOS_EXTRA_CHARS", "2500"))
+VECINOS_DECAIMIENTO = 0.6
+VECINOS_PESO_ATRAS = 0.5
 
 # Búsqueda de texto (consultas sin imagen): puntaje = peso × coseno (MiniLM)
 # + (1 − peso) × BM25 normalizado al mejor chunk. Ver qdrant_store.busqueda_densa_lexica.

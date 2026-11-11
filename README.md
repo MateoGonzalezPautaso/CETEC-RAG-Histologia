@@ -262,7 +262,7 @@ Cada consulta pasa por un grafo de nodos LangGraph (ver [Arquitectura](#arquitec
 3. **clasificar** — verifica que la consulta sea sobre histología usando similitud semántica y, si está cerca del umbral, un árbitro LLM.
 4. **generar_consulta** — reformula la pregunta para mejorar el retrieval, extrae entidades (tejidos, tinciones, células, etc.).
 5. **buscar_qdrant** — búsqueda híbrida. Sin imagen: puntaje de cada chunk = `HIBRIDA_PESO_VECTOR` (0.5) × coseno + el resto × BM25 normalizado (un término raro como "osteona" o "laringe 43" decide el orden), más captions de imagen si la consulta es visual. Con imagen: texto semántico + entidades + embeddings visuales UNI/PLIP.
-6. **filtrar_contexto** — descarta resultados por debajo del umbral de similitud y limita a 6 bloques de contexto.
+6. **filtrar_contexto** — descarta resultados por debajo del umbral de similitud y limita a 6 bloques de contexto. Sin imagen, a cada resultado le suma los fragmentos vecinos del mismo PDF (el que sigue a "Tejido muscular estriado voluntario." trae su descripción), hasta `VECINOS_EXTRA_CHARS` (2500) caracteres, sin cruzar a otra ficha de imagen o práctica.
 7. **analisis_comparativo** — si hay imagen del usuario, la compara contra imágenes del manual.
 8. **generar_respuesta** — sintetiza la respuesta con el LLM usando el contexto recuperado.
 9. **finalizar** — guarda trayectoria, actualiza memoria semántica.
@@ -440,10 +440,11 @@ actual de cada pregunta, no la que quedó guardada en el baseline.
 
 Para elegir el peso coseno/BM25 de la búsqueda de texto (`HIBRIDA_PESO_VECTOR`) sin gastar cuota,
 `recuperacion.py` mide recall fuente+página@5 de la búsqueda sola con varios pesos (1.0 = solo
-embeddings, 0.0 = solo BM25):
+embeddings, 0.0 = solo BM25). Con el peso actual mide además qué fracción de las palabras de la
+referencia llega a los 6 bloques de contexto, sin y con los fragmentos vecinos:
 
 ```bash
-uv run python -m optimizacion.recuperacion --baseline optimizacion/resultados/baseline-v4.jsonl
+uv run python -m optimizacion.recuperacion --baseline optimizacion/resultados/baseline-v6.jsonl
 ```
 
 El archivo usa el mismo formato que el agente de Física de

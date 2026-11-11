@@ -6,15 +6,19 @@ como el pipeline) y ordena los chunks con `busqueda_densa_lexica` para cada
 peso del coseno: 1.0 es solo embeddings, 0.0 es solo BM25. Mide recall
 fuente+página@5 sobre ese orden.
 
+Con el peso actual mide también qué fracción de las palabras de la respuesta
+de referencia llega al contexto (los 6 primeros chunks), sin y con los
+fragmentos vecinos (`expandir_con_vecinos`, VECINOS_EXTRA_CHARS). Sirve para
+probar el contexto antes de gastar cuota en un baseline.
+
 Es la búsqueda sola: no aplica el filtro de fuente dominante ni suma el texto
-de las imágenes, así que no coincide exactamente con el recall del baseline.
-Sirve para elegir HIBRIDA_PESO_VECTOR antes de gastar cuota en una corrida.
+de las imágenes, así que no coincide exactamente con el baseline.
 
 Con --baseline usa, además de la pregunta, la consulta reescrita que guardó esa
 corrida (como hace el pipeline); sin él, BM25 busca solo con la pregunta.
 
 Uso (desde app/, con el servidor DETENIDO y los chunks ya indexados):
-    uv run python -m optimizacion.recuperacion --baseline optimizacion/resultados/baseline-v4.jsonl
+    uv run python -m optimizacion.recuperacion --baseline optimizacion/resultados/baseline-v6.jsonl
     uv run python -m optimizacion.recuperacion --pesos 0.3 0.5 0.7
 """
 
@@ -29,10 +33,12 @@ sys.path.insert(0, str(APP_DIR))
 
 from evaluar_ragas import GOLDEN_SET, calcular_recall_fuente_pagina_at_k  # noqa: E402
 from langchain_huggingface import HuggingFaceEmbeddings  # noqa: E402
-from src.config import HIBRIDA_PESO_VECTOR, QDRANT_PATH  # noqa: E402
+from optimizacion.inspeccionar import palabras_clave  # noqa: E402
+from src.config import HIBRIDA_PESO_VECTOR, QDRANT_PATH, VECINOS_EXTRA_CHARS  # noqa: E402
 from src.qdrant_store import QdrantVectorStore  # noqa: E402
 
 PESOS = [1.0, 0.7, 0.6, 0.5, 0.4, 0.3, 0.0]
+SECCIONES = 6  # resultados de texto que llegan al prompt (assistant._nodo_filtrar_contexto)
 
 
 def _consultas_reescritas(ruta: Path) -> dict:
@@ -47,22 +53,46 @@ def _consultas_reescritas(ruta: Path) -> dict:
     return salida
 
 
+def _cobertura(referencia: str, textos: list) -> float:
+    ref = palabras_clave(referencia)
+    return len(ref & palabras_clave("\n\n".join(textos))) / len(ref) if ref else 0.0
+
+
+async def _medir_cobertura(store, embeddings: list, consultas: list) -> None:
+    sin, con, largos = [], [], []
+    for item, emb, consulta in zip(GOLDEN_SET, embeddings, consultas):
+        res = await store.busqueda_densa_lexica(emb, consulta, top_k=SECCIONES)
+        expandidos = await store.expandir_con_vecinos(res)
+        textos = [r["texto_contexto"] if "texto_contexto" in r else r["texto"] for r in expandidos]
+        sin.append(_cobertura(item["ground_truth"], [r["texto"] for r in res]))
+        con.append(_cobertura(item["ground_truth"], textos))
+        largos.append(sum(len(t) for t in textos))
+
+    print(f"\nPalabras de la referencia en el contexto ({SECCIONES} primeros, peso {HIBRIDA_PESO_VECTOR}; "
+          f"vecinos hasta {VECINOS_EXTRA_CHARS} caracteres):")
+    print(f"   sin vecinos: {sum(sin) / len(sin):.3f} | con vecinos: {sum(con) / len(con):.3f} | "
+          f"contexto medio {sum(largos) / len(largos):.0f} caracteres (máx. {max(largos)})")
+    cambios = [(i, s, c) for i, (s, c) in enumerate(zip(sin, con)) if abs(c - s) > 0.001]
+    for i, s, c in cambios:
+        print(f"   #{i:<3} {s:.2f} → {c:.2f}  {GOLDEN_SET[i]['question'][:60]}")
+
+
 async def main_async(args) -> int:
     reescritas = _consultas_reescritas(args.baseline) if args.baseline else {}
     store = QdrantVectorStore(path=QDRANT_PATH)
-    embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+    modelo = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
     pesos = args.pesos or PESOS
 
+    embeddings = [modelo.embed_query(item["question"]) for item in GOLDEN_SET]
+    consultas = [f"{item['question']} {reescritas.get(i, '')}" for i, item in enumerate(GOLDEN_SET)]
+
     recall = {p: [] for p in pesos}
-    for i, item in enumerate(GOLDEN_SET):
-        emb = embeddings.embed_query(item["question"])
-        consulta = f"{item['question']} {reescritas.get(i, '')}"
+    for item, emb, consulta in zip(GOLDEN_SET, embeddings, consultas):
         for p in pesos:
             res = await store.busqueda_densa_lexica(emb, consulta, top_k=5, peso_vector=p)
             recall[p].append(calcular_recall_fuente_pagina_at_k(
                 res, item.get("fuente_esperada", ""), item.get("paginas_esperadas", []), k=5,
             ))
-    store.client.close()
 
     print(f"\nRecall fuente+página@5 de la búsqueda de texto ({len(GOLDEN_SET)} preguntas; "
           f"peso actual = {HIBRIDA_PESO_VECTOR})\n")
@@ -81,6 +111,9 @@ async def main_async(args) -> int:
         valores = [recall[p][i] for p in pesos]
         if max(valores) != min(valores):
             print(f"{i:3d}  " + "".join(f"{v:>6.2f}" for v in valores) + f"  {item['question'][:50]}")
+
+    await _medir_cobertura(store, embeddings, consultas)
+    store.client.close()
     return 0
 
 
