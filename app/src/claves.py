@@ -11,8 +11,12 @@ uso (429), queda en pausa el tiempo que indica Groq ("Please try again in
 
 Si todas las keys están en pausa y la primera se libera en menos de
 GROQ_ESPERA_MAX_S (90 s), se espera y se reintenta: así un límite por minuto
-no termina en error. Si la espera es más larga (límite diario), el error sigue
-su curso (src/llm.py decide si reintenta o corta por cuota).
+no termina en error. Se sigue esperando mientras la llamada no lleve más de
+GROQ_ESPERA_TOTAL_S (10 min) intentando: con el juez de GEPA las tres keys
+chocan seguido con el límite de tokens por minuto, y cortar a las pocas rondas
+convertía un límite de segundos en "cuota agotada". Si la espera es más larga
+(límite diario), el error sigue su curso (src/llm.py decide si reintenta o
+corta por cuota).
 
 Con una sola key (GROQ_API_KEY) se aplica lo mismo sobre esa key.
 """
@@ -65,13 +69,13 @@ class RotadorClaves:
     """Pool de keys con round-robin y pausa por key. Es thread-safe."""
 
     def __init__(self, claves: List[str], cooldown_minuto: float = 60.0, cooldown_diario: float = 3600.0,
-                 espera_max: float = 90.0, rondas: int = 4):
+                 espera_max: float = 90.0, espera_total: float = 600.0):
         # Sin duplicados y en el orden dado.
         self.claves = list(dict.fromkeys(c.strip() for c in claves if c and c.strip()))
         self.cooldown_minuto = cooldown_minuto
         self.cooldown_diario = cooldown_diario
         self.espera_max = espera_max
-        self.rondas = rondas
+        self.espera_total = espera_total
         self._libre_desde = {}
         self._siguiente = 0
         self._lock = threading.Lock()
@@ -85,6 +89,7 @@ class RotadorClaves:
             cooldown_minuto=float(os.getenv("GROQ_COOLDOWN_MINUTO_S", "60")),
             cooldown_diario=float(os.getenv("GROQ_COOLDOWN_DIARIO_S", "3600")),
             espera_max=float(os.getenv("GROQ_ESPERA_MAX_S", "90")),
+            espera_total=float(os.getenv("GROQ_ESPERA_TOTAL_S", "600")),
         )
 
     def __len__(self) -> int:
@@ -124,10 +129,10 @@ class RotadorClaves:
         tipo = "diario" if diario else "por minuto"
         print(f"   🔑 Key {_sufijo(clave)} con límite {tipo} — en pausa {espera:.0f}s")
 
-    def _plan(self, ronda: int, intento_hecho: bool):
+    def _plan(self, inicio: float, intento_hecho: bool):
         """Qué hacer cuando no quedan keys libres: (esperar_s, clave_forzada) o None para cortar."""
         clave, espera = self._proxima_libre()
-        if espera <= self.espera_max and ronda < self.rondas - 1:
+        if espera <= self.espera_max and time.time() + espera - inicio <= self.espera_total:
             return espera, None
         if not intento_hecho:
             # Todas venían en pausa larga (estimada): se prueba la que se libera
@@ -140,10 +145,11 @@ class RotadorClaves:
         if not self.claves:
             raise RuntimeError("No hay API keys de Groq configuradas (GROQ_API_KEYS o GROQ_API_KEY).")
         ultimo: Optional[Exception] = None
-        for ronda in range(self.rondas):
+        inicio = time.time()
+        while True:
             claves = self.orden_de_intento()
             if not claves:
-                plan = self._plan(ronda, ultimo is not None)
+                plan = self._plan(inicio, ultimo is not None)
                 if plan is None:
                     break
                 espera, forzada = plan
@@ -168,10 +174,11 @@ class RotadorClaves:
         if not self.claves:
             raise RuntimeError("No hay API keys de Groq configuradas (GROQ_API_KEYS o GROQ_API_KEY).")
         ultimo: Optional[Exception] = None
-        for ronda in range(self.rondas):
+        inicio = time.time()
+        while True:
             claves = self.orden_de_intento()
             if not claves:
-                plan = self._plan(ronda, ultimo is not None)
+                plan = self._plan(inicio, ultimo is not None)
                 if plan is None:
                     break
                 espera, forzada = plan

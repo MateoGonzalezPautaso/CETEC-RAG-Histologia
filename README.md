@@ -489,7 +489,7 @@ Material complementario para entender el diseño, las decisiones y los resultado
   generador, que debe aceptar imágenes; `JUEZ_MODELO` para el juez).
 
 **El LLM responde "sin cuota"**
-- La cuota de Groq se resetea diariamente. Esperar, o cargar varias keys en `GROQ_API_KEYS` para que se roten solas (pipeline, juez y GEPA). Una key con límite diario queda en pausa 1 hora (`GROQ_COOLDOWN_DIARIO_S`) y una con límite por minuto, 60 s (`GROQ_COOLDOWN_MINUTO_S`).
+- La cuota de Groq se resetea diariamente. Esperar, o cargar varias keys en `GROQ_API_KEYS` para que se roten solas (pipeline, juez y GEPA). Una key con límite diario queda en pausa 1 hora (`GROQ_COOLDOWN_DIARIO_S`) y una con límite por minuto, 60 s (`GROQ_COOLDOWN_MINUTO_S`). Si todas las keys están en pausa por límites por minuto, la llamada espera y reintenta hasta 10 minutos (`GROQ_ESPERA_TOTAL_S`) antes de fallar.
 - El sistema bloquea automáticamente nuevas llamadas por 5 minutos tras detectar cuota agotada (configurable con `LLM_QUOTA_BLOCK_SECONDS`).
 
 **No aparecen imágenes del manual**
