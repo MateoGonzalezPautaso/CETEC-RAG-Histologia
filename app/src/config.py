@@ -21,7 +21,11 @@ MAX_CONTEXTO_PROMPT = 8000
 # vecino es VECINOS_DECAIMIENTO^(puesto del resultado + distancia), por
 # VECINOS_PESO_ATRAS si está antes del resultado: entran primero los que siguen
 # a los mejores resultados. Ver qdrant_store.expandir_con_vecinos.
-VECINOS_EXTRA_CHARS = int(os.getenv("VECINOS_EXTRA_CHARS", "2500"))
+# Desactivado por defecto: en el baseline v7 (2500 caracteres) el juez dio 0.887
+# contra 0.902 del v6. El presupuesto se fue en vecinos de resultados de otro
+# tema, no llegó a lo que faltaba en #5 y #24, y en #21 Qwen armó una
+# definición de osteona con el texto extra.
+VECINOS_EXTRA_CHARS = int(os.getenv("VECINOS_EXTRA_CHARS", "0"))
 VECINOS_DECAIMIENTO = 0.6
 VECINOS_PESO_ATRAS = 0.5
 
