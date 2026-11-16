@@ -239,6 +239,15 @@
       flex-shrink: 0; margin-top: 2px;
     }
     .qs-step h4 { font-size: .9rem; font-weight: 600; margin-bottom: 8px; }
+    .qs-step > div:last-child { min-width: 0; }
+    #quickstart pre { overflow-x: auto; }
+
+    /* Pantallas angostas: los enlaces del menú y los bloques de código no ensanchan la página */
+    @media (max-width: 600px) {
+      .nav-inner { padding: 0 16px; }
+      .nav-links a:not(.btn-gh) { display: none; }
+      .container { padding: 0 16px; }
+    }
 
     /* ── Team ── */
     #team { text-align: center; }
@@ -301,7 +310,7 @@
       <img src="https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white" alt="FastAPI">
       <img src="https://img.shields.io/badge/LangGraph-1C3C3C?logo=langchain&logoColor=white" alt="LangGraph">
       <img src="https://img.shields.io/badge/Qdrant-DC244C?logo=qdrant&logoColor=white" alt="Qdrant">
-      <img src="https://img.shields.io/badge/LLM-Llama_4_Scout_(Groq)-F55036" alt="Groq">
+      <img src="https://img.shields.io/badge/LLM-Qwen_3.8_27B_(Groq)-F55036" alt="Groq">
       <img src="https://img.shields.io/badge/License-MIT-green" alt="MIT">
     </div>
   </div>
@@ -355,7 +364,7 @@
       <div class="feat-card">
         <div class="feat-icon">🔎</div>
         <h3>Búsqueda híbrida</h3>
-        <p>Combina similitud semántica de texto, entidades histológicas, keywords y embeddings visuales en una sola búsqueda ponderada.</p>
+        <p>En texto, similitud semántica (MiniLM) más BM25 sobre todo el manual, para que un término puntual como “osteona” decida el orden. Con imagen suma embeddings visuales y entidades histológicas.</p>
       </div>
       <div class="feat-card">
         <div class="feat-icon">🧭</div>
@@ -370,7 +379,7 @@
       <div class="feat-card">
         <div class="feat-icon">📊</div>
         <h3>Evaluación cuantitativa</h3>
-        <p>Pipeline RAGAS completo (fidelidad, relevancia, recall de contexto) + smoke tests de confiabilidad automatizados.</p>
+        <p>Golden set de 32 preguntas con fuente y página, LLM como juez con una rúbrica docente y optimización del prompt con DSPy GEPA, además de RAGAS y smoke tests.</p>
       </div>
       <div class="feat-card">
         <div class="feat-icon">💻</div>
@@ -408,9 +417,10 @@
       <div class="pipe-node accent">Respuesta citada</div>
     </div>
     <p class="pipe-note">
-      La búsqueda híbrida en <span>buscar_qdrant</span> combina cinco señales: vectorial de texto (MiniLM),
-      embeddings visuales UNI + PLIP, búsqueda por entidades histológicas (payload de Qdrant)
-      y fallback por keywords. Los pesos cambian según si hay imagen activa o no.
+      En consultas de texto, <span>buscar_qdrant</span> puntúa todos los fragmentos del manual con
+      0,5 × coseno (MiniLM) + 0,5 × BM25. Con imagen, combina embeddings visuales UNI + PLIP, texto
+      y entidades histológicas (payload de Qdrant), y <span>analisis_comparativo</span> contrasta la imagen
+      con las referencias del manual.
     </p>
   </div>
 </section>
@@ -445,8 +455,22 @@
       <div class="stack-item">
         <div class="stack-dot" style="background:#F55036"></div>
         <div>
-          <h4>Llama 4 Scout (Groq)</h4>
-          <p>LLM generador y árbitro de clasificación</p>
+          <h4>Qwen 3.8 27B (Groq)</h4>
+          <p>LLM generador multimodal y árbitro de clasificación</p>
+        </div>
+      </div>
+      <div class="stack-item">
+        <div class="stack-dot" style="background:#10a37f"></div>
+        <div>
+          <h4>gpt-oss-120b (Groq)</h4>
+          <p>Juez de la evaluación y reflexión de GEPA</p>
+        </div>
+      </div>
+      <div class="stack-item">
+        <div class="stack-dot" style="background:#db2777"></div>
+        <div>
+          <h4>DSPy GEPA</h4>
+          <p>Optimización del prompt con algoritmos genéticos</p>
         </div>
       </div>
       <div class="stack-item">
@@ -466,8 +490,8 @@
       <div class="stack-item">
         <div class="stack-dot" style="background:#0ea5e9"></div>
         <div>
-          <h4>MiniLM-L6-v2</h4>
-          <p>Embeddings de texto, 384d</p>
+          <h4>MiniLM-L6-v2 + BM25</h4>
+          <p>Búsqueda de texto: embeddings 384d y puntaje léxico</p>
         </div>
       </div>
       <div class="stack-item">
@@ -485,29 +509,30 @@
 <section id="metrics">
   <div class="container">
     <h2 class="section-title">Evaluación</h2>
-    <p class="section-sub">Métricas RAGAS sobre 12 preguntas con golden set fuente + página, juez gpt-4o-mini.</p>
+    <p class="section-sub">Etapa 2: golden set de 32 preguntas de texto con fuente y página esperadas, y un LLM juez (gpt-oss-120b) que puntúa cada respuesta con una rúbrica docente.</p>
     <div class="metrics-grid">
       <div class="metric-card">
-        <div class="metric-val">87%</div>
-        <div class="metric-label">Faithfulness</div>
-        <div class="metric-note">La respuesta es fiel al contexto recuperado</div>
+        <div class="metric-val">91%</div>
+        <div class="metric-label">Recall fuente + página</div>
+        <div class="metric-note">Entre los 5 primeros fragmentos (antes 87%)</div>
       </div>
       <div class="metric-card">
-        <div class="metric-val">80%</div>
-        <div class="metric-label">Context Precision</div>
-        <div class="metric-note">El contexto recuperado es relevante</div>
+        <div class="metric-val">0.90</div>
+        <div class="metric-label">Puntaje del juez</div>
+        <div class="metric-note">Promedio ponderado de 0 a 1 (antes 0.77)</div>
       </div>
       <div class="metric-card">
-        <div class="metric-val">89%</div>
-        <div class="metric-label">Context Recall</div>
-        <div class="metric-note">Se recupera la evidencia necesaria</div>
+        <div class="metric-val">4.94/5</div>
+        <div class="metric-label">Fidelidad</div>
+        <div class="metric-note">Lo que afirma está en el contexto recuperado</div>
       </div>
       <div class="metric-card">
-        <div class="metric-val">100%</div>
-        <div class="metric-label">Fuente dominante</div>
-        <div class="metric-note">La fuente PDF dominante siempre es la correcta</div>
+        <div class="metric-val">4.56/5</div>
+        <div class="metric-label">Corrección</div>
+        <div class="metric-note">Coincide con la respuesta de referencia del manual</div>
       </div>
     </div>
+    <p class="section-sub" style="margin-top:20px">La mejora vino de la recuperación (fragmentos por oraciones y secciones, y búsqueda coseno + BM25). Dos corridas de GEPA no superaron al prompt actual. El modo con imagen todavía no tiene una evaluación equivalente. Detalle en el <a href="https://github.com/MateoGonzalezPautaso/cetec-rag-histologia/blob/main/docs/Etapa%202/Informe_Tecnico_Etapa2_Grupo2.pdf" target="_blank" rel="noopener" style="color:var(--accent)">informe técnico de la Etapa 2</a>.</p>
   </div>
 </section>
 
@@ -538,7 +563,7 @@
         <div>
           <h4>Configurar las claves de API</h4>
           <pre><span class="cmd">cp</span> .env.example app/.env
-<span class="comment"># Editar app/.env con GROQ_API_KEY y HF_TOKEN</span></pre>
+<span class="comment"># Editar app/.env con GROQ_API_KEYS y HF_TOKEN</span></pre>
         </div>
       </div>
       <div class="qs-step">
@@ -567,7 +592,7 @@
     </div>
     <p class="institution">
       Facultad de Ingeniería · Universidad de Buenos Aires<br>
-      Febrero – Junio 2026
+      Febrero – Noviembre 2026
     </p>
   </div>
 </section>
