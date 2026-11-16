@@ -15,6 +15,11 @@ SIMILARITY_THRESHOLD = 0.70
 # lee el mismo contexto.
 MAX_CONTEXTO_PROMPT = 8000
 
+# Imágenes por pedido al LLM (la del usuario más las referencias del manual).
+# Qwen en Groq acepta hasta 3 y rechaza el pedido entero si van más (400 "Too
+# many images provided"); Llama-4-Scout aceptaba 5.
+MAX_IMAGENES_LLM = int(os.getenv("MAX_IMAGENES_LLM", "3"))
+
 # Fragmentos vecinos (consultas sin imagen): a los resultados de texto se les
 # suman los chunks que los siguen o preceden en el PDF, hasta
 # VECINOS_EXTRA_CHARS caracteres en total (0 = desactivado). La prioridad de un

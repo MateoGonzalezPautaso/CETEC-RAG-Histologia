@@ -25,7 +25,7 @@ from .claves import crear_chat_groq
 from .classifier import ClasificadorSemantico
 from .config import (
     COLLECTION_CHUNKS, COLLECTION_IMAGENES, DIRECTORIO_IMAGENES, DIRECTORIO_PDFS,
-    FEATURES_DISCRIMINATORIAS, LLM_MODELO, MAX_CONTEXTO_PROMPT, PROMPTS_OPTIMIZADOS,
+    FEATURES_DISCRIMINATORIAS, LLM_MODELO, MAX_CONTEXTO_PROMPT, MAX_IMAGENES_LLM, PROMPTS_OPTIMIZADOS,
     PROMPTS_OPTIMIZADOS_PATH, QDRANT_PATH, SIMILARITY_THRESHOLD, TRAZAS_DIR, TRAZAS_HABILITADAS,
     _safe, normalizar,
 )
@@ -637,7 +637,9 @@ class AsistenteHistologiaQdrant:
             state["trayectoria"].append({"nodo": "AnalisisComparativo", "motivo": "sin imagen", "tiempo": round(time.time() - t0, 2)})
             return state
 
-        imagenes_ref = [p for p in state.get("imagenes_recuperadas", [])[:3] if os.path.exists(p)]
+        # La imagen del usuario ocupa uno de los MAX_IMAGENES_LLM lugares del pedido.
+        imagenes_ref = [p for p in state.get("imagenes_recuperadas", [])
+                        if os.path.exists(p)][:max(MAX_IMAGENES_LLM - 1, 0)]
         if not imagenes_ref:
             print("ℹ️ Sin referencias — análisis comparativo omitido")
             state["analisis_comparativo"] = None
@@ -959,6 +961,7 @@ class AsistenteHistologiaQdrant:
             "Responde EXCLUSIVAMENTE con el contenido del manual e imágenes de referencia."
         )})
 
+        imagenes_enviadas = 0
         imagen_path = state.get("imagen_path")
         if state.get("tiene_imagen") and imagen_path and os.path.exists(imagen_path):
             try:
@@ -970,6 +973,7 @@ class AsistenteHistologiaQdrant:
                          else f"IMAGEN ACTIVA (turno {self._get_memoria(state.get('user_id')).imagen_turno_subida})")
                 content_parts.append({"type": "text", "text": f"\n**{label}:**"})
                 content_parts.append({"type": "image_url", "image_url": {"url": f"data:{mime};base64,{data}"}})
+                imagenes_enviadas += 1
             except Exception as e:
                 print(f"   ⚠️ No se pudo añadir imagen usuario: {e}")
 
@@ -977,6 +981,8 @@ class AsistenteHistologiaQdrant:
             for img_path in state.get("imagenes_recuperadas", [])[:3]:
                 if not os.path.exists(img_path):
                     continue
+                if imagenes_enviadas >= MAX_IMAGENES_LLM:
+                    break
                 try:
                     with open(img_path, "rb") as f:
                         data = base64.b64encode(f.read()).decode("utf-8")
@@ -984,6 +990,7 @@ class AsistenteHistologiaQdrant:
                     mime = "image/png" if ext == ".png" else "image/jpeg"
                     content_parts.append({"type": "text", "text": f"\n**REFERENCIA [Imagen: {os.path.basename(img_path)}]:**"})
                     content_parts.append({"type": "image_url", "image_url": {"url": f"data:{mime};base64,{data}"}})
+                    imagenes_enviadas += 1
                 except Exception as e:
                     print(f"   ⚠️ {img_path}: {e}")
 
