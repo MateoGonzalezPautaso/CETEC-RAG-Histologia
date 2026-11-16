@@ -29,7 +29,8 @@ from src.config import DIRECTORIO_PDFS
 from src.graph import AgentState
 
 # ═══════════════════════════════════════════════════════════════════════
-# GOLDEN SET — 20 preguntas con ground truth del manual
+# GOLDEN SET — 32 preguntas con ground truth del manual
+# (12 de arch3/arch4 + 20 de arch2)
 # ═══════════════════════════════════════════════════════════════════════
 
 GOLDEN_SET = [
@@ -65,9 +66,11 @@ GOLDEN_SET = [
     },
     {
         "question": "Como se organiza el tejido testicular humano adulto?",
-        "ground_truth": "El testiculo esta rodeado por tunica albuginea que emite tabiques y divide el organo en lobulillos. Cada lobulillo contiene tubulos seminiferos y tejido intersticial con vasos y celulas de Leydig.",
+        # Corregida (10/2026): el manual no nombra vasos en el intersticio, y el
+        # intersticio esta en la pagina 2.
+        "ground_truth": "Cada testiculo esta rodeado por una capsula gruesa de tejido fibromuscular, la tunica albuginea, desde la cual se proyectan tabiques que lo dividen en lobulillos. Cada lobulillo esta compuesto por tubulos seminiferos, formados por el epitelio seminifero (celulas germinales y celulas de Sertoli), y por el intersticio testicular que los rodea, constituido por tejido conectivo laxo y celulas de Leydig.",
         "fuente_esperada": "arch4.pdf",
-        "paginas_esperadas": [1],
+        "paginas_esperadas": [1, 2],
     },
     {
         "question": "Que celulas forman el epitelio seminifero del tubulo seminifero?",
@@ -89,21 +92,155 @@ GOLDEN_SET = [
     },
     {
         "question": "Como se describe la espermatogonia A oscura?",
-        "ground_truth": "La espermatogonia A oscura se localiza en la zona basal del epitelio seminifero y presenta cromatina mas condensada u oscura, en contraste con otros tipos de espermatogonias.",
+        # Corregida (10/2026): la referencia anterior ("cromatina mas condensada u
+        # oscura") contradecia al manual, que describe una rarefaccion central.
+        "ground_truth": "Las espermatogonias A oscuras son celulas germinales con forma de cupula, las primeras desde la lamina basal hacia la luz tubular, que se distinguen por una zona de rarefaccion de la cromatina ubicada en el centro del nucleo.",
         "fuente_esperada": "arch4.pdf",
-        "paginas_esperadas": [6],
+        "paginas_esperadas": [1, 6],
     },
     {
         "question": "Que son las celulas peritubulares o mioides del tubulo seminifero?",
-        "ground_truth": "Las celulas peritubulares o mioides forman parte de la pared del tubulo seminifero junto con la membrana basal y fibras colagenas; tienen rasgos intermedios entre miofibroblastos y celulas musculares lisas, con filamentos de actina y miosina que les dan capacidad contractil.",
+        # Corregida (10/2026): actina, miosina y capacidad contractil no estan en el manual.
+        "ground_truth": "Las celulas peritubulares o mioides son celulas alargadas con caracteristicas de miofibroblastos que, junto con la lamina basal del epitelio y las fibras colagenas, constituyen la pared del tubulo seminifero.",
         "fuente_esperada": "arch4.pdf",
-        "paginas_esperadas": [14],
+        "paginas_esperadas": [2, 14],
     },
     {
         "question": "Que componentes se encuentran en el intersticio testicular?",
-        "ground_truth": "El intersticio testicular contiene tejido conectivo laxo, vasos sanguineos y celulas intersticiales de Leydig localizadas entre los tubulos seminiferos.",
+        # Corregida (10/2026): los vasos sanguineos no figuran en el manual, y la
+        # descripcion del intersticio esta en la pagina 2, no en la 1.
+        "ground_truth": "Alrededor de los tubulos seminiferos, el intersticio testicular esta constituido por un estroma de tejido conectivo laxo y por las celulas de Leydig o intersticiales: celulas poliedricas grandes y agrupadas, con nucleo central, cromatina laxa, nucleolo evidente y citoplasma acidofilo con inclusiones lipidicas.",
         "fuente_esperada": "arch4.pdf",
-        "paginas_esperadas": [1, 15],
+        "paginas_esperadas": [2, 15],
+    },
+    # ── arch2 (Sprint 1/2: cartílago, hueso, músculo, tejido nervioso) ──
+    # Recuperadas del golden set del notebook v4.2. Van al final para que
+    # `--limit 12` siga evaluando las mismas preguntas que el baseline previo.
+    {
+        "question": "Cuales son las dos capas del pericondrio y que celulas contiene cada una?",
+        "ground_truth": "El pericondrio tiene una capa fibrosa con fibroblastos y fibras de colagena, y una capa condrogena con celulas condrogenas y condroblastos.",
+        "fuente_esperada": "arch2.pdf",
+        "paginas_esperadas": [1],
+    },
+    {
+        "question": "Que estructuras se identifican en el cartilago hialino?",
+        "ground_truth": "En el cartilago hialino se identifican nidos o grupos isogenos, condrocitos, condroblastos, y matriz territorial e interterritorial.",
+        "fuente_esperada": "arch2.pdf",
+        "paginas_esperadas": [1, 2],
+    },
+    {
+        "question": "Que laminilla corresponde al cartilago hialino de traquea?",
+        "ground_truth": "La laminilla numero 44 Traquea 44 ES corresponde al cartilago hialino, donde se senala el pericondrio con su capa fibrosa y condrogena.",
+        "fuente_esperada": "arch2.pdf",
+        "paginas_esperadas": [1],
+    },
+    {
+        "question": "Cuales son las estructuras senaladas en la lamina de laringe 43?",
+        "ground_truth": "En la lamina de laringe 43 se senalan nidos, condrocitos, matriz territorial e interterritorial del cartilago hialino.",
+        "fuente_esperada": "arch2.pdf",
+        "paginas_esperadas": [2],
+    },
+    {
+        "question": "Que caracteristica distintiva tiene el cartilago elastico respecto al hialino?",
+        "ground_truth": "El cartilago elastico contiene fibras elasticas en su matriz, ademas de nidos, condrocitos, condroblastos y matriz territorial e interterritorial.",
+        "fuente_esperada": "arch2.pdf",
+        "paginas_esperadas": [3],
+    },
+    {
+        "question": "En que laminilla se observa el cartilago elastico y de que organo proviene?",
+        "ground_truth": "El cartilago elastico se observa en la laminilla de piel de oreja de raton 85a.",
+        "fuente_esperada": "arch2.pdf",
+        "paginas_esperadas": [3],
+    },
+    {
+        "question": "Que se observa en el cartilago hialino del disco de crecimiento?",
+        "ground_truth": "En el cartilago hialino del disco de crecimiento se observan hileras de condrocitos. La laminilla corresponde a hueso fracturado 79c.",
+        "fuente_esperada": "arch2.pdf",
+        "paginas_esperadas": [4],
+    },
+    {
+        "question": "Como se distingue el cartilago fibroso histologicamente?",
+        "ground_truth": "El cartilago fibroso se distingue por hileras de condrocitos y fibras de colagena dispuestas regularmente.",
+        "fuente_esperada": "arch2.pdf",
+        "paginas_esperadas": [5],
+    },
+    {
+        "question": "Cuales son los tipos de celulas del hueso compacto?",
+        "ground_truth": "Las celulas del hueso compacto son osteoprogenitoras, osteoblastos, osteocitos y osteoclastos.",
+        "fuente_esperada": "arch2.pdf",
+        "paginas_esperadas": [7, 8, 9],
+    },
+    {
+        "question": "Que es la osteona y que estructuras la componen?",
+        # Corregida (10/2026): el manual no define la osteona; la referencia
+        # anterior venia de un libro de texto. Se espera que el asistente lo diga.
+        "ground_truth": "El manual no define la osteona ni describe sus componentes: la nombra entre las estructuras que el alumno debe identificar en el microscopio en la practica de tejido oseo (junto con el endostio, el periostio, los osteocitos, los osteoclastos y los conductos de Havers y de Volkmann) y la senala en la laminilla Hueso lijado 81 (Imagen 12.1).",
+        "fuente_esperada": "arch2.pdf",
+        "paginas_esperadas": [9, 10],
+    },
+    {
+        # El manual no explica la diferencia: solo nombra ambos conductos. La
+        # referencia anterior traía información de fuera del manual; ahora la
+        # pregunta controla que el sistema admita lo que el manual no dice.
+        "question": "Que diferencia hay entre el conducto de Havers y el de Volkmann?",
+        "ground_truth": "El manual no describe la diferencia entre ambos conductos: solo menciona el conducto de Havers y el conducto de Volckmann como estructuras del hueso compacto que se deben identificar en la practica 12, y los senala en el modelo de hueso compacto (Imagen 12.7).",
+        "fuente_esperada": "arch2.pdf",
+        "paginas_esperadas": [9, 16],
+    },
+    {
+        "question": "Que funcion tienen los osteoclastos y donde se ubican?",
+        "ground_truth": "Los osteoclastos son celulas gigantes multinucleadas de 20 a 100 micras cuya funcion es la reabsorcion osea. Se encuentran en las lagunas de Howship.",
+        "fuente_esperada": "arch2.pdf",
+        "paginas_esperadas": [9],
+    },
+    {
+        "question": "Cuales son los tres tipos de tejido muscular y sus caracteristicas principales?",
+        "ground_truth": "Estriado voluntario con celulas cilindricas y nucleos perifericos, estriado involuntario o cardiaco con discos intercalares, y liso involuntario con celulas fusiformes y nucleo central.",
+        "fuente_esperada": "arch2.pdf",
+        "paginas_esperadas": [17],
+    },
+    {
+        "question": "Que estructuras componen la sarcomera?",
+        "ground_truth": "La sarcomera se extiende entre dos lineas Z e incluye banda A oscura, banda I clara, banda H dentro de la A, y linea M al centro de la H.",
+        "fuente_esperada": "arch2.pdf",
+        "paginas_esperadas": [17, 22],
+    },
+    {
+        "question": "Que laminilla se usa para observar el tejido muscular liso involuntario?",
+        "ground_truth": "Se usa la laminilla de estomago HE para observar los miocitos lisos involuntarios.",
+        "fuente_esperada": "arch2.pdf",
+        "paginas_esperadas": [21],
+    },
+    {
+        "question": "Como se clasifican las neuronas segun el numero de prolongaciones?",
+        "ground_truth": "Las neuronas se clasifican en unipolares, bipolares, pseudounipolares y multipolares.",
+        "fuente_esperada": "arch2.pdf",
+        "paginas_esperadas": [24],
+    },
+    {
+        "question": "En que laminilla se observan las neuronas piriformes y en grano?",
+        "ground_truth": "Las neuronas piriformes y en grano se observan en la laminilla de corteza cerebelosa 61 HE.",
+        "fuente_esperada": "arch2.pdf",
+        "paginas_esperadas": [27],
+    },
+    {
+        "question": "Cual es la diferencia entre astrocito protoplasmático y fibroso?",
+        "ground_truth": "El astrocito protoplasmático tiene prolongaciones cortas y gruesas en sustancia gris. El fibroso tiene prolongaciones largas y delgadas en sustancia blanca.",
+        "fuente_esperada": "arch2.pdf",
+        "paginas_esperadas": [31],
+    },
+    {
+        "question": "Que funcion tienen los oligodendrocitos?",
+        "ground_truth": "Los oligodendrocitos participan en la formacion de la mielina para la proteccion de los axones en el sistema nervioso central.",
+        "fuente_esperada": "arch2.pdf",
+        "paginas_esperadas": [31, 33],
+    },
+    {
+        "question": "Que son las celulas ependimarias y donde se ubican?",
+        "ground_truth": "Las celulas ependimarias revisten el canal ependimario y el conducto central de la medula espinal. Son cubicas o cilindricas.",
+        "fuente_esperada": "arch2.pdf",
+        # La descripción está en las páginas 30 y 31; la 35 es la imagen.
+        "paginas_esperadas": [30, 31, 35],
     },
 ]
 

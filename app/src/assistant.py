@@ -7,6 +7,7 @@ All public entry points are async.
 
 import base64
 import glob
+import io
 import json
 import os
 import re
@@ -17,17 +18,21 @@ from typing import Any, Dict, List, Optional
 import fitz  # PyMuPDF
 import torch
 from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_groq import ChatGroq
 from langchain_huggingface import HuggingFaceEmbeddings
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
 
+from .claves import crear_chat_groq
 from .classifier import ClasificadorSemantico
 from .config import (
     COLLECTION_CHUNKS, COLLECTION_IMAGENES, DIRECTORIO_IMAGENES, DIRECTORIO_PDFS,
-    FEATURES_DISCRIMINATORIAS, QDRANT_PATH, SIMILARITY_THRESHOLD,
+    FEATURES_DISCRIMINATORIAS, IMAGEN_LLM_MAX_LADO, IMAGENES_REFERENCIA_RESPUESTA, LLM_MODELO, MAX_CONTEXTO_MULTIMODAL, MAX_CONTEXTO_PROMPT,
+    MAX_IMAGENES_LLM,
+    PROMPTS_OPTIMIZADOS,
+    PROMPTS_OPTIMIZADOS_PATH, QDRANT_PATH, SIMILARITY_THRESHOLD, TRAZAS_DIR, TRAZAS_HABILITADAS,
     _safe, normalizar,
 )
+from .chunking import CHUNK_MAX, CHUNKING_VERSION, dividir_en_chunks
 from .embeddings import PlipWrapper, UniWrapper
 from .extractors import ExtractorEntidades, ExtractorImagenesPDF, ExtractorTemario
 from .graph import AgentState
@@ -36,7 +41,35 @@ from .llm import (
     userdata,
 )
 from .memory import SemanticMemory
+from .prompts import CLAVE_RESPUESTA_TEXTO, INSTRUCCION_BASE_TEXTO, INSTRUCCION_PROSA, PromptsOptimizados
 from .qdrant_store import QdrantVectorStore
+from .trazas import RegistroTrazas, construir_traza
+
+
+def _imagen_data_url(path: str) -> str:
+    """Data URL de una imagen para el LLM, con el lado mayor reducido a IMAGEN_LLM_MAX_LADO.
+
+    Los tokens que cuenta Groq por imagen crecen con su área: sin achicar, una
+    captura de 1500 px más dos referencias del manual y el contexto pasan el
+    límite de tokens de entrada de Qwen.
+    """
+    if IMAGEN_LLM_MAX_LADO <= 0:
+        with open(path, "rb") as f:
+            data = base64.b64encode(f.read()).decode("utf-8")
+        mime = "image/png" if os.path.splitext(path)[1].lower() == ".png" else "image/jpeg"
+        return f"data:{mime};base64,{data}"
+    from PIL import Image
+    with Image.open(path) as img:
+        img = img.convert("RGB")
+        img.thumbnail((IMAGEN_LLM_MAX_LADO, IMAGEN_LLM_MAX_LADO), Image.LANCZOS)
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=90)
+    return "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode("utf-8")
+
+
+def _es_pedido_demasiado_grande(error: Exception) -> bool:
+    """413 de Groq: el pedido solo ya supera el límite de tokens de entrada por minuto."""
+    return getattr(error, "status_code", None) == 413 or "Request too large" in str(error)
 
 
 class AsistenteHistologiaQdrant:
@@ -64,6 +97,8 @@ class AsistenteHistologiaQdrant:
         self.compiled_graph = None
         self.memory_saver = None
         self.contenido_base = ""
+        self.registro_trazas = RegistroTrazas(TRAZAS_DIR, habilitado=TRAZAS_HABILITADAS)
+        self.prompts = PromptsOptimizados(PROMPTS_OPTIMIZADOS_PATH, habilitado=PROMPTS_OPTIMIZADOS)
 
         self.device = self._detect_device()
         print(f"✅ AsistenteHistologiaQdrant v5.0 inicializado en {self.device}")
@@ -106,12 +141,8 @@ class AsistenteHistologiaQdrant:
         print("✅ Todos los componentes inicializados")
 
     def _init_modelos(self):
-        self.llm = ChatGroq(
-            model="meta-llama/llama-4-scout-17b-16e-instruct",
-            api_key=userdata.get("GROQ_API_KEY"),
-            temperature=0, max_retries=1,
-        )
-        print("✅ Groq inicializado")
+        self.llm = crear_chat_groq(LLM_MODELO, temperature=0, max_retries=1)
+        print(f"✅ Groq inicializado ({LLM_MODELO})")
 
         self.embeddings = HuggingFaceEmbeddings(
             model_name="sentence-transformers/all-MiniLM-L6-v2",
@@ -463,6 +494,10 @@ class AsistenteHistologiaQdrant:
             entidades=entidades,
             top_k=10,
             incluir_imagenes_texto=pide_visual,
+            # BM25 busca con la pregunta original y con la reescrita: la
+            # reescritura a veces pierde un término puntual ("43") y la original
+            # puede ser un seguimiento ("¿y su función?") sin el tema.
+            consulta_lexica=f"{state.get('consulta_texto', '')} {state.get('consulta_busqueda_texto') or ''}",
         )
 
         state["resultados_busqueda"] = resultados
@@ -530,6 +565,7 @@ class AsistenteHistologiaQdrant:
         if es_solo_texto and validos:
             validos = self._filtrar_por_fuente_dominante(validos, state)
             validos = sorted(validos, key=lambda x: x.get("similitud", 0), reverse=True)[:6]
+            validos = await self.qdrant_store.expandir_con_vecinos(validos)
 
         state["resultados_validos"] = validos
         tiene_imgs = len(state.get("imagenes_para_mostrar", [])) > 0
@@ -549,6 +585,8 @@ class AsistenteHistologiaQdrant:
 
         if validos:
             validos_sorted = sorted(validos, key=lambda x: x.get("similitud", 0), reverse=True)
+            # Un resultado unido al pasaje de otro (fragmentos vecinos) no repite su texto.
+            validos_sorted = [r for r in validos_sorted if r.get("texto_contexto", None) != ""]
             bloques = []
             for i, r in enumerate(validos_sorted, 1):
                 es_top_img = i == 1 and r.get("tipo") == "imagen"
@@ -560,7 +598,8 @@ class AsistenteHistologiaQdrant:
                 if r.get("imagen_path"):
                     enc += f" | Imagen: {os.path.basename(r['imagen_path'])}"
                 enc += "]"
-                bloques.append(f"{enc}\n{_safe(r.get('texto',''))[:700]}")
+                texto = _safe(r["texto_contexto"]) if r.get("texto_contexto") else _safe(r.get("texto", ""))[:CHUNK_MAX]
+                bloques.append(f"{enc}\n{texto}")
             state["contexto_documentos"] = "\n\n".join(bloques)
             modo_str = "TEXTO" if es_solo_texto else "IMAGEN+TEXTO"
             print(f"✅ {len(validos)} válidos | {len(imagenes_unicas)} imgs | Modo: {modo_str}")
@@ -627,7 +666,9 @@ class AsistenteHistologiaQdrant:
             state["trayectoria"].append({"nodo": "AnalisisComparativo", "motivo": "sin imagen", "tiempo": round(time.time() - t0, 2)})
             return state
 
-        imagenes_ref = [p for p in state.get("imagenes_recuperadas", [])[:3] if os.path.exists(p)]
+        # La imagen del usuario ocupa uno de los MAX_IMAGENES_LLM lugares del pedido.
+        imagenes_ref = [p for p in state.get("imagenes_recuperadas", [])
+                        if os.path.exists(p)][:max(MAX_IMAGENES_LLM - 1, 0)]
         if not imagenes_ref:
             print("ℹ️ Sin referencias — análisis comparativo omitido")
             state["analisis_comparativo"] = None
@@ -645,11 +686,8 @@ class AsistenteHistologiaQdrant:
         )}]
 
         try:
-            with open(state["imagen_path"], "rb") as f:
-                data_u = base64.b64encode(f.read()).decode("utf-8")
-            ext = os.path.splitext(state["imagen_path"])[1].lower()
-            mime = "image/png" if ext == ".png" else "image/jpeg"
-            content_parts.append({"type": "image_url", "image_url": {"url": f"data:{mime};base64,{data_u}"}})
+            data_u = _imagen_data_url(state["imagen_path"])
+            content_parts.append({"type": "image_url", "image_url": {"url": data_u}})
         except Exception as e:
             print(f"⚠️ No se pudo cargar imagen usuario: {e}")
             state["analisis_comparativo"] = None
@@ -667,11 +705,8 @@ class AsistenteHistologiaQdrant:
                 f"DESCRIPCIÓN DEL MANUAL: {texto_ref}"
             )})
             try:
-                with open(ref_path, "rb") as f:
-                    data_r = base64.b64encode(f.read()).decode("utf-8")
-                ext = os.path.splitext(ref_path)[1].lower()
-                mime = "image/png" if ext == ".png" else "image/jpeg"
-                content_parts.append({"type": "image_url", "image_url": {"url": f"data:{mime};base64,{data_r}"}})
+                data_r = _imagen_data_url(ref_path)
+                content_parts.append({"type": "image_url", "image_url": {"url": data_r}})
             except Exception as e:
                 print(f"  ⚠️ No se pudo cargar {ref_path}: {e}")
 
@@ -758,10 +793,22 @@ class AsistenteHistologiaQdrant:
         content_parts = self._build_content_parts(es_solo_texto, state)
 
         try:
-            resp = await invoke_con_reintento(self.llm, [
-                SystemMessage(content=system_prompt),
-                HumanMessage(content=content_parts),
-            ])
+            try:
+                resp = await invoke_con_reintento(self.llm, [
+                    SystemMessage(content=system_prompt),
+                    HumanMessage(content=content_parts),
+                ])
+            except Exception as e:
+                if not _es_pedido_demasiado_grande(e):
+                    raise
+                pedidos = re.search(r"Requested (\d+)", str(e))
+                print(f"   ⚠️ Pedido demasiado grande para el límite de tokens de entrada (413"
+                      f"{', pidió ' + pedidos.group(1) + ' tokens' if pedidos else ''}): "
+                      "se reintenta con la mitad del contexto y sin imágenes de referencia")
+                resp = await invoke_con_reintento(self.llm, [
+                    SystemMessage(content=system_prompt),
+                    HumanMessage(content=self._build_content_parts(es_solo_texto, state, reducido=True)),
+                ])
             state["respuesta_final"] = resp.content
 
             # Auto-append source citation if missing
@@ -782,16 +829,24 @@ class AsistenteHistologiaQdrant:
             print(f"✅ Respuesta: {len(resp.content)} chars")
         except Exception as e:
             print(f"❌ Error: {e}")
-            state["respuesta_final"] = f"Error: {e}"
+            if _es_pedido_demasiado_grande(e):
+                state["respuesta_final"] = (
+                    "No pude generar la respuesta por una limitación del modelo: en el plan gratuito "
+                    "de Groq, Qwen admite hasta 7000 tokens de entrada por minuto, y esta consulta "
+                    "(imagen, contexto del manual y análisis) los supera incluso achicada. "
+                    "Probá con una pregunta más concreta sobre la imagen o en una conversación nueva."
+                )
+            else:
+                state["respuesta_final"] = f"Error: {e}"
 
         # Replace image references with exact matches from Qdrant
         if state.get("mostrar_imagenes") and state.get("respuesta_final"):
             state = await self._actualizar_imagenes_desde_respuesta(state)
 
-        imagenes_usadas = len([
+        imagenes_usadas = min(len([
             p for p in state.get("imagenes_recuperadas", [])[:3]
             if not es_solo_texto and os.path.exists(p)
-        ])
+        ]), IMAGENES_REFERENCIA_RESPUESTA)
         state["trayectoria"].append({
             "nodo": "GenerarRespuesta", "contexto_suficiente": True,
             "imagenes_usadas": imagenes_usadas,
@@ -842,14 +897,7 @@ class AsistenteHistologiaQdrant:
                 "disponible. NO inventes contenido.\n"
             )
 
-        instruccion_prosa = (
-            "ESTILO DE RESPUESTA:\n"
-            "- Respondé en prosa, como un profesor explicando.\n"
-            "- Evitá listas con bullets y formato estructurado rígido.\n"
-            "- Primero respondé directamente la pregunta en 1 a 3 frases.\n"
-            "- Agregá explicación solo si aporta al punto consultado.\n"
-            "- Tono didáctico y natural.\n"
-        )
+        instruccion_prosa = INSTRUCCION_PROSA
         instruccion_continuidad = (
             "- Adaptá tu respuesta como continuación natural del diálogo, "
             "sin repetir información ya proporcionada.\n"
@@ -875,14 +923,18 @@ class AsistenteHistologiaQdrant:
             )
 
         if es_solo_texto:
+            # La instrucción optimizada por GEPA reemplaza la parte estática
+            # (reglas + estilo); lo dinámico se sigue agregando igual.
+            optimizada = self.prompts.instruccion(CLAVE_RESPUESTA_TEXTO)
+            if optimizada:
+                return (
+                    f"{optimizada}\n\n"
+                    f"{ontologia_str}\n"
+                    f"{instruccion_continuidad}{instruccion_imagenes}"
+                    f"{self.prompts.demos_texto(CLAVE_RESPUESTA_TEXTO)}"
+                )
             return (
-                "Eres un asistente experto de histología. Respondés consultas de texto "
-                "basándote EXCLUSIVAMENTE en el contenido del manual/base de datos.\n\n"
-                "REGLAS:\n"
-                "1. Usá SOLO la información de las SECCIONES DEL MANUAL proporcionadas.\n"
-                "2. Citá las fuentes con [Manual: archivo].\n"
-                "3. NO inventes información que no esté en las secciones proporcionadas.\n"
-                "4. Si el tema NO aparece en el manual ni en la ontología, indicalo.\n\n"
+                f"{INSTRUCCION_BASE_TEXTO}"
                 f"{ontologia_str}\n"
                 f"{instruccion_prosa}{instruccion_continuidad}{instruccion_imagenes}"
             )
@@ -914,58 +966,77 @@ class AsistenteHistologiaQdrant:
                 + ("\n\nIMPORTANTE: El análisis comparativo tiene PRIORIDAD en el diagnóstico." if tiene_comparativo else "")
             )
 
-    def _build_content_parts(self, es_solo_texto: bool, state: AgentState) -> list:
+    def _build_content_parts(self, es_solo_texto: bool, state: AgentState, reducido: bool = False) -> list:
+        """Mensaje de usuario para la respuesta. Con `reducido` (reintento tras un
+        413 por el límite de tokens de entrada) va la mitad del contexto, textos
+        de análisis más cortos y ninguna imagen de referencia."""
         content_parts = []
         historial_str = _safe(state.get("historial_conversacional"))
         if historial_str:
             content_parts.append({"type": "text", "text": f"**HISTORIAL:**\n{historial_str}\n\n---\n"})
 
         ctx_docs = state["contexto_documentos"]
-        if len(ctx_docs) > 4000:
-            ctx_docs = ctx_docs[:4000] + "\n... [contexto truncado]"
+        limite_ctx = MAX_CONTEXTO_PROMPT if es_solo_texto else MAX_CONTEXTO_MULTIMODAL
+        if reducido:
+            limite_ctx //= 2
+        if len(ctx_docs) > limite_ctx:
+            ctx_docs = ctx_docs[:limite_ctx] + "\n... [contexto truncado]"
 
         analisis_comp_str = _safe(state.get("analisis_comparativo"))
         estructura_str = _safe(state.get("estructura_identificada"))
         analisis_visual_str = _safe(state.get("analisis_visual"), "No disponible")
-        seccion_comp = f"\n\n**ANÁLISIS COMPARATIVO:**\n{analisis_comp_str[:2000]}" if analisis_comp_str else ""
+        largo_comp, largo_visual = (800, 400) if reducido else (1500, 800)
+        seccion_comp = f"\n\n**ANÁLISIS COMPARATIVO:**\n{analisis_comp_str[:largo_comp]}" if analisis_comp_str else ""
         seccion_est = f"\n\n**ESTRUCTURA IDENTIFICADA:** {estructura_str}" if estructura_str else ""
 
+        if es_solo_texto:
+            # En modo texto el LLM recibe solo la consulta y las secciones del
+            # manual, lo mismo que el programa que optimiza GEPA. TÉRMINOS,
+            # ENTIDADES y TEMA son artefactos de la búsqueda generados por el
+            # LLM: con Qwen 3.8 los tomaba como lista de lo que debía aparecer
+            # y respondía que "el manual no contiene" información que sí estaba.
+            metadatos_busqueda = ""
+        else:
+            metadatos_busqueda = (
+                f"**TÉRMINOS:** {_safe(state.get('terminos_busqueda'))[:300]}\n\n"
+                f"**ENTIDADES:** {json.dumps(state.get('entidades_consulta', {}), ensure_ascii=False)}\n\n"
+                f"**TEMA:** {_safe(state.get('tema_encontrado'), 'N/A')}\n\n"
+                f"**ANÁLISIS VISUAL:**\n{analisis_visual_str[:largo_visual]}\n\n"
+            )
         content_parts.append({"type": "text", "text": (
             f"**CONSULTA:** {state['consulta_texto']}\n\n"
-            f"**TÉRMINOS:** {_safe(state.get('terminos_busqueda'))[:300]}\n\n"
-            f"**ENTIDADES:** {json.dumps(state.get('entidades_consulta', {}), ensure_ascii=False)}\n\n"
-            f"**TEMA:** {_safe(state.get('tema_encontrado'), 'N/A')}\n\n"
-            f"**ANÁLISIS VISUAL:**\n{analisis_visual_str[:800]}\n\n"
+            f"{metadatos_busqueda}"
             f"**SECCIONES DEL MANUAL:**\n{ctx_docs}"
             f"{seccion_comp}{seccion_est}\n\n"
             "Responde EXCLUSIVAMENTE con el contenido del manual e imágenes de referencia."
         )})
 
+        imagenes_enviadas = 0
         imagen_path = state.get("imagen_path")
         if state.get("tiene_imagen") and imagen_path and os.path.exists(imagen_path):
             try:
-                with open(imagen_path, "rb") as f:
-                    data = base64.b64encode(f.read()).decode("utf-8")
-                ext = os.path.splitext(imagen_path)[1].lower()
-                mime = "image/png" if ext == ".png" else "image/jpeg"
+                data = _imagen_data_url(imagen_path)
                 label = ("NUEVA IMAGEN" if state.get("imagen_es_nueva")
                          else f"IMAGEN ACTIVA (turno {self._get_memoria(state.get('user_id')).imagen_turno_subida})")
                 content_parts.append({"type": "text", "text": f"\n**{label}:**"})
-                content_parts.append({"type": "image_url", "image_url": {"url": f"data:{mime};base64,{data}"}})
+                content_parts.append({"type": "image_url", "image_url": {"url": data}})
+                imagenes_enviadas += 1
             except Exception as e:
                 print(f"   ⚠️ No se pudo añadir imagen usuario: {e}")
 
-        if not es_solo_texto:
+        if not es_solo_texto and not reducido:
+            refs_enviadas = 0
             for img_path in state.get("imagenes_recuperadas", [])[:3]:
                 if not os.path.exists(img_path):
                     continue
+                if imagenes_enviadas >= MAX_IMAGENES_LLM or refs_enviadas >= IMAGENES_REFERENCIA_RESPUESTA:
+                    break
+                refs_enviadas += 1
                 try:
-                    with open(img_path, "rb") as f:
-                        data = base64.b64encode(f.read()).decode("utf-8")
-                    ext = os.path.splitext(img_path)[1].lower()
-                    mime = "image/png" if ext == ".png" else "image/jpeg"
+                    data = _imagen_data_url(img_path)
                     content_parts.append({"type": "text", "text": f"\n**REFERENCIA [Imagen: {os.path.basename(img_path)}]:**"})
-                    content_parts.append({"type": "image_url", "image_url": {"url": f"data:{mime};base64,{data}"}})
+                    content_parts.append({"type": "image_url", "image_url": {"url": data}})
+                    imagenes_enviadas += 1
                 except Exception as e:
                     print(f"   ⚠️ {img_path}: {e}")
 
@@ -1204,10 +1275,7 @@ class AsistenteHistologiaQdrant:
 
     async def _describir_imagen(self, imagen_path: str) -> str:
         try:
-            with open(imagen_path, "rb") as f:
-                data = base64.b64encode(f.read()).decode("utf-8")
-            ext = os.path.splitext(imagen_path)[1].lower()
-            mime = "image/png" if ext == ".png" else "image/jpeg"
+            data = _imagen_data_url(imagen_path)
             features_lista = "\n".join(f"  {i+1}. {f}" for i, f in enumerate(FEATURES_DISCRIMINATORIAS))
             msg = HumanMessage(content=[
                 {"type": "text", "text": (
@@ -1219,7 +1287,7 @@ class AsistenteHistologiaQdrant:
                     "PARTE 3 — DIAGNÓSTICO DIFERENCIAL (mínimo 3 opciones):\n"
                     "Para cada opción, listá evidencias a favor y en contra."
                 )},
-                {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{data}"}},
+                {"type": "image_url", "image_url": {"url": data}},
             ])
             resp = await invoke_con_reintento(self.llm, [msg])
             return resp.content
@@ -1254,18 +1322,33 @@ class AsistenteHistologiaQdrant:
     ):
         base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         marker_path = os.path.join(base_dir, ".qdrant_index_complete")
+        # La marca guarda la versión del chunking con que se indexó ("ok" en las
+        # versiones anteriores, que cortaban cada 500 caracteres).
+        try:
+            with open(marker_path) as f:
+                version_indexada = f.read().strip()
+        except OSError:
+            version_indexada = ""
 
         if not forzar:
             try:
                 n_chunks = self.qdrant_store.client.count(collection_name=COLLECTION_CHUNKS).count
                 n_imgs = self.qdrant_store.client.count(collection_name=COLLECTION_IMAGENES).count
-                if n_chunks > 0 and n_imgs > 0 and os.path.exists(marker_path):
+                if n_chunks > 0 and n_imgs > 0 and version_indexada == CHUNKING_VERSION:
                     print(f"✅ BD ya poblada ({n_chunks} chunks, {n_imgs} imágenes). Saltando indexación.")
                     return
-                if n_chunks > 0 and n_imgs > 0:
+                if n_chunks > 0 and n_imgs > 0 and version_indexada:
+                    print(f"⚠️ Los chunks se indexaron con otro chunking ({version_indexada!r}, el actual es "
+                          f"{CHUNKING_VERSION!r}) — reindexando.")
+                elif n_chunks > 0 and n_imgs > 0:
                     print("⚠️ BD poblada pero sin marca de completitud — reindexando para garantizar consistencia.")
             except Exception as e:
                 print(f"⚠️ No se pudo verificar estado de la BD: {e}")
+
+        if version_indexada != CHUNKING_VERSION:
+            # Con otro chunking cambian los textos y la cantidad de chunks por
+            # página: los upserts no pisan los que sobran y quedarían chunks viejos.
+            await self.qdrant_store.reiniciar_chunks()
 
         print("📄 Extrayendo imágenes para vincular a chunks...")
         imagenes_pdf = self.extractor_imagenes.extraer_de_directorio(directorio_pdfs)
@@ -1279,8 +1362,9 @@ class AsistenteHistologiaQdrant:
         for pdf_path in glob.glob(os.path.join(directorio_pdfs, "*.pdf")):
             fuente = os.path.basename(pdf_path)
             paginas_texto = self._leer_pdf_por_paginas(pdf_path)
-            for num_pagina, texto_pag in paginas_texto.items():
-                chunks = self._chunks(texto_pag)
+            contexto_chunks: dict = {}  # título y encabezado que pasan de una página a la siguiente
+            for num_pagina, texto_pag in sorted(paginas_texto.items()):
+                chunks = self._chunks(texto_pag, contexto_chunks)
                 img_paths = img_por_pdf_pag.get((fuente, num_pagina), [])
                 for i, chunk in enumerate(chunks):
                     if not chunk.strip():
@@ -1367,7 +1451,7 @@ class AsistenteHistologiaQdrant:
         if fallos == 0:
             try:
                 with open(marker_path, "w") as f:
-                    f.write("ok")
+                    f.write(CHUNKING_VERSION)
             except Exception as e:
                 print(f"⚠️ No se pudo escribir marca de completitud: {e}")
         else:
@@ -1398,8 +1482,8 @@ class AsistenteHistologiaQdrant:
             print(f"⚠️ Error leyendo por páginas {path}: {e}")
         return paginas
 
-    def _chunks(self, texto: str, size: int = 500) -> List[str]:
-        return [texto[i:i + size] for i in range(0, len(texto), size)]
+    def _chunks(self, texto: str, contexto: Optional[dict] = None) -> List[str]:
+        return dividir_en_chunks(texto, contexto=contexto)
 
     # ── Public entry point ────────────────────────────────────────────────────
 
@@ -1408,8 +1492,10 @@ class AsistenteHistologiaQdrant:
         consulta_texto: str,
         imagen_path: Optional[str] = None,
         user_id: str = "default_user",
+        origen: str = "api",
     ) -> dict:
         memoria = self._get_memoria(user_id)
+        t0 = time.time()
         tiene_imagen_activa = memoria.tiene_imagen_previa() or bool(imagen_path)
 
         print(f"\n{'='*70}")
@@ -1452,13 +1538,25 @@ class AsistenteHistologiaQdrant:
             },
         }
 
+        error = None
         try:
             final = await self.compiled_graph.ainvoke(initial_state, config=config)
             respuesta = final["respuesta_final"]
         except Exception as e:
             import traceback; traceback.print_exc()
             respuesta = f"Error: {e}"
+            error = respuesta
             final = {}
+
+        traza = construir_traza(
+            final=final, consulta_original=consulta_texto, session_id=user_id,
+            imagen_subida=imagen_path, duracion_s=time.time() - t0,
+            modelo=getattr(self.llm, "model_name", None), origen=origen, error=error,
+            # El prompt optimizado solo aplica al modo texto.
+            prompt=({"fuente": "multimodal"} if final.get("tiene_imagen")
+                    else self.prompts.descripcion(CLAVE_RESPUESTA_TEXTO)),
+        )
+        self.registro_trazas.registrar(traza)
 
         print(f"\n{'='*70}\n📖 RESPUESTA:\n{'='*70}")
         print(respuesta)
@@ -1476,6 +1574,10 @@ class AsistenteHistologiaQdrant:
             "imagenes_para_mostrar": final.get("imagenes_para_mostrar", []),
             "trayectoria": final.get("trayectoria", []),
             "imagen_activa": os.path.basename(imagen_activa) if imagen_activa else None,
+            "trace_id": traza["trace_id"],
+            # La traza completa, para quien arme datasets (optimizacion/baseline.py)
+            # sin depender de que el registro en disco esté habilitado.
+            "traza": traza,
         }
         return resultado
 
