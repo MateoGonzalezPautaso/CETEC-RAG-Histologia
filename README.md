@@ -60,7 +60,7 @@ Proyecto desarrollado en el **CETEC UBATIC** (Facultad de Ingeniería, Universid
 |---|---|
 | **Dirección del proyecto** | Diego Racero |
 | **Equipo (Grupo 2)** | Mateo Gonzalez Pautaso · Alén Calandria |
-| **Período** | 9 de febrero – 29 de junio de 2026 |
+| **Período** | Etapa 1: 9 de febrero – 29 de junio de 2026 · Etapa 2: 20 de julio – noviembre de 2026 |
 
 **Stack:** FastAPI · LangGraph · Qdrant · Groq (Qwen 3.8 27B) · MiniLM · UNI/PLIP · frontend web
 
@@ -74,7 +74,9 @@ Proyecto desarrollado en el **CETEC UBATIC** (Facultad de Ingeniería, Universid
 - 🔎 **Búsqueda híbrida**: en consultas de texto combina similitud semántica (MiniLM) y BM25 sobre todos los chunks; con imagen suma entidades (tejidos/tinciones/células) y embeddings visuales.
 - 🧭 **Clasificador de dominio**: descarta consultas que no son de histología antes de gastar recuperación/LLM.
 - 🧠 **Memoria por sesión**: recuerda el historial y la imagen activa entre turnos, aislada por usuario.
-- 📊 **Evaluación cuantitativa**: pipeline con RAGAS (recall@k, fidelidad) + smoke tests de confiabilidad.
+- 📊 **Evaluación cuantitativa**: baseline sobre un golden set de 32 preguntas (recall fuente+página@5), LLM como juez con una rúbrica docente, RAGAS y smoke tests de confiabilidad.
+- 🧬 **Optimización del prompt con DSPy GEPA**, usando el juez como métrica (ver [Etapa 2](#optimización-del-prompt-con-dspy-gepa-etapa-2)).
+- 🧾 **Trazas** de cada interacción en JSONL, para armar datasets a partir del uso real.
 - 💻 **Local-first**: Qdrant embebido por defecto (sin servicios externos), con opción de Qdrant Cloud.
 
 ---
@@ -152,6 +154,9 @@ cp .env.example app/.env
 cd app && ./start.sh
 ```
 
+> **En Windows (PowerShell)**, `start.sh` no corre. Después de los pasos 0 a 2 (con `copy` en lugar de `cp`):
+> `cd app`, `$env:PYTHONUTF8 = "1"`, `uv sync` y `uv run python server.py`, y abrir http://localhost:10007.
+
 > ⚠️ **Sobre `app/pyproject.toml`:** el archivo **no está versionado** (está en `.gitignore`) porque las
 > dependencias dependen de la máquina — en particular el build de **PyTorch (CPU vs. CUDA)** y el índice
 > de descarga (`[tool.uv.sources]`). Por eso se versiona una **plantilla** (`app/pyproject.example.toml`)
@@ -192,6 +197,8 @@ cp .env.example app/.env
 |---|---|---|---|
 | `GROQ_API_KEY` | ✅ | LLM principal. Alcanza con esta o con `GROQ_API_KEYS` | https://console.groq.com/keys |
 | `GROQ_API_KEYS` | ❌ | Varias keys gratuitas separadas por comas (una por integrante). Se rotan ante límites de uso (429); `GROQ_API_KEY` se suma al pool | https://console.groq.com/keys |
+| `LLM_MODELO` | ❌ | Modelo generador de Groq; tiene que aceptar imágenes. Por defecto: `qwen/qwen3.8-27b` | `uv run python -m optimizacion.modelos --probar` |
+| `JUEZ_MODELO` | ❌ | Modelo juez de la evaluación y de GEPA. Por defecto: `openai/gpt-oss-120b` | Ídem |
 | `HF_TOKEN` | ✅ | Descarga modelos UNI y PLIP — requiere aceptar los términos del modelo | https://huggingface.co/settings/tokens |
 | `QDRANT_PATH` | ❌ | Carpeta local persistente de Qdrant. Por defecto: `./qdrant_data` | No aplica |
 | `QDRANT_URL` | ❌ | URL de Qdrant remoto (Cloud). **Dejar VACÍO para usar la base local** — un valor placeholder/inválido hace fallar la conexión con un error de DNS | https://cloud.qdrant.io/ |
@@ -204,6 +211,10 @@ cp .env.example app/.env
 | `TRAZAS_DIR` | ❌ | Carpeta de las trazas JSONL. Por defecto: `./trazas` (dentro de `app/`) | No aplica |
 | `PROMPTS_OPTIMIZADOS` | ❌ | Usar el prompt de respuesta optimizado por GEPA (ver [Optimización](#optimización-del-prompt-con-dspy-gepa-etapa-2)). Por defecto: `false` | No aplica |
 | `PROMPTS_OPTIMIZADOS_PATH` | ❌ | Archivo del prompt optimizado. Por defecto: `./optimizacion/optimized_prompts.json` | No aplica |
+
+El resto de las variables opcionales (esperas de la rotación de keys, peso coseno/BM25, fragmentos vecinos,
+límites de las consultas con imagen y tokens de GEPA) están explicadas en [`.env.example`](.env.example), con sus
+valores por defecto.
 
 ---
 
@@ -264,7 +275,7 @@ Cada consulta pasa por un grafo de nodos LangGraph (ver [Arquitectura](#arquitec
 5. **buscar_qdrant** — búsqueda híbrida. Sin imagen: puntaje de cada chunk = `HIBRIDA_PESO_VECTOR` (0.5) × coseno + el resto × BM25 normalizado (un término raro como "osteona" o "laringe 43" decide el orden), más captions de imagen si la consulta es visual. Con imagen: texto semántico + entidades + embeddings visuales UNI/PLIP.
 6. **filtrar_contexto** — descarta resultados por debajo del umbral de similitud y limita a 6 bloques de contexto. Opcional (`VECINOS_EXTRA_CHARS`, desactivado por defecto): sin imagen, suma a cada resultado los fragmentos vecinos del mismo PDF, sin cruzar a otra ficha de imagen o práctica. Con 2500 caracteres, el baseline v7 no mejoró al v6 (juez 0.887 contra 0.902).
 7. **analisis_comparativo** — si hay imagen del usuario, la compara contra imágenes del manual.
-8. **generar_respuesta** — sintetiza la respuesta con el LLM usando el contexto recuperado.
+8. **generar_respuesta** — sintetiza la respuesta con el LLM usando el contexto recuperado. Con imagen, el pedido lleva la imagen del usuario y hasta `MAX_CONTEXTO_MULTIMODAL` caracteres del manual, para entrar en el límite de tokens de entrada de Qwen (ver [Troubleshooting](#troubleshooting)).
 9. **finalizar** — guarda trayectoria, actualiza memoria semántica.
 
 ---
@@ -290,6 +301,7 @@ Cada consulta pasa por un grafo de nodos LangGraph (ver [Arquitectura](#arquitec
 │   │   ├── llm.py             # Wrappers de LLM con reintentos y manejo de cuota
 │   │   ├── embeddings.py      # Wrappers PLIP y UNI para embeddings de imagen
 │   │   ├── qdrant_store.py    # Cliente Qdrant: esquema, upsert y búsqueda híbrida
+│   │   ├── lexico.py          # BM25 sobre los chunks para la búsqueda de texto
 │   │   ├── memory.py          # Memoria semántica: historial + imagen activa por sesión
 │   │   ├── classifier.py      # Clasificador de dominio histológico (embeddings + LLM)
 │   │   ├── extractors.py      # Extractor de imágenes PDF, temario y entidades
@@ -353,6 +365,20 @@ duración y el error si lo hubo. La respuesta de `/api/chat` devuelve el `trace_
 El formato está definido en `app/src/trazas.py` (`construir_traza`); `leer_trazas()` las carga para
 armar datasets. Las trazas contienen las consultas de los usuarios, por eso no se versionan. Se
 desactivan con `TRAZAS_HABILITADAS=false`.
+
+### Resultados de la Etapa 2
+
+Sobre el golden set de 32 preguntas de texto, con las referencias corregidas (detalle en el
+[informe técnico](docs/Etapa%202/Informe_Tecnico_Etapa2_Grupo2.pdf)):
+
+| | Recall fuente+página@5 | Juez (0–1) | Corrección (1–5) | Fidelidad (1–5) |
+|---|---|---|---|---|
+| Baseline v2 (chunking fijo) | 0.867 | 0.773 | 3.72 | 4.47 |
+| **Baseline v6 (versión final)** | **0.912** | **0.902** | **4.56** | **4.94** |
+
+La mejora vino de la recuperación: chunks por oraciones y secciones, y búsqueda coseno + BM25. Dos
+corridas de GEPA no superaron al prompt actual, y sumar fragmentos vecinos (v7) tampoco mejoró. El modo
+con imagen no tiene todavía una evaluación equivalente.
 
 ### Baseline y LLM as a Judge (Etapa 2)
 
