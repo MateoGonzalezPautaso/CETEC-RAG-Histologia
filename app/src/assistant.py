@@ -26,7 +26,7 @@ from .claves import crear_chat_groq
 from .classifier import ClasificadorSemantico
 from .config import (
     COLLECTION_CHUNKS, COLLECTION_IMAGENES, DIRECTORIO_IMAGENES, DIRECTORIO_PDFS,
-    FEATURES_DISCRIMINATORIAS, IMAGEN_LLM_MAX_LADO, LLM_MODELO, MAX_CONTEXTO_MULTIMODAL, MAX_CONTEXTO_PROMPT,
+    FEATURES_DISCRIMINATORIAS, IMAGEN_LLM_MAX_LADO, IMAGENES_REFERENCIA_RESPUESTA, LLM_MODELO, MAX_CONTEXTO_MULTIMODAL, MAX_CONTEXTO_PROMPT,
     MAX_IMAGENES_LLM,
     PROMPTS_OPTIMIZADOS,
     PROMPTS_OPTIMIZADOS_PATH, QDRANT_PATH, SIMILARITY_THRESHOLD, TRAZAS_DIR, TRAZAS_HABILITADAS,
@@ -801,7 +801,9 @@ class AsistenteHistologiaQdrant:
             except Exception as e:
                 if not _es_pedido_demasiado_grande(e):
                     raise
-                print("   ⚠️ Pedido demasiado grande para el límite de tokens de entrada (413): "
+                pedidos = re.search(r"Requested (\d+)", str(e))
+                print(f"   ⚠️ Pedido demasiado grande para el límite de tokens de entrada (413"
+                      f"{', pidió ' + pedidos.group(1) + ' tokens' if pedidos else ''}): "
                       "se reintenta con la mitad del contexto y sin imágenes de referencia")
                 resp = await invoke_con_reintento(self.llm, [
                     SystemMessage(content=system_prompt),
@@ -841,10 +843,10 @@ class AsistenteHistologiaQdrant:
         if state.get("mostrar_imagenes") and state.get("respuesta_final"):
             state = await self._actualizar_imagenes_desde_respuesta(state)
 
-        imagenes_usadas = len([
+        imagenes_usadas = min(len([
             p for p in state.get("imagenes_recuperadas", [])[:3]
             if not es_solo_texto and os.path.exists(p)
-        ])
+        ]), IMAGENES_REFERENCIA_RESPUESTA)
         state["trayectoria"].append({
             "nodo": "GenerarRespuesta", "contexto_suficiente": True,
             "imagenes_usadas": imagenes_usadas,
@@ -1023,11 +1025,13 @@ class AsistenteHistologiaQdrant:
                 print(f"   ⚠️ No se pudo añadir imagen usuario: {e}")
 
         if not es_solo_texto and not reducido:
+            refs_enviadas = 0
             for img_path in state.get("imagenes_recuperadas", [])[:3]:
                 if not os.path.exists(img_path):
                     continue
-                if imagenes_enviadas >= MAX_IMAGENES_LLM:
+                if imagenes_enviadas >= MAX_IMAGENES_LLM or refs_enviadas >= IMAGENES_REFERENCIA_RESPUESTA:
                     break
+                refs_enviadas += 1
                 try:
                     data = _imagen_data_url(img_path)
                     content_parts.append({"type": "text", "text": f"\n**REFERENCIA [Imagen: {os.path.basename(img_path)}]:**"})

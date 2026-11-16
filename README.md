@@ -497,10 +497,11 @@ Material complementario para entender el diseño, las decisiones y los resultado
 **Consultas con imagen: "Too many images" (400) o "Request too large" (413)**
 - Son limitaciones de Qwen en el plan gratuito de Groq: acepta hasta 3 imágenes por pedido y 7000 tokens de
   entrada por minuto. Cada pedido manda como máximo `MAX_IMAGENES_LLM` imágenes (3), achicadas a
-  `IMAGEN_LLM_MAX_LADO` px (768), y la respuesta con imagen usa hasta `MAX_CONTEXTO_MULTIMODAL` caracteres del
-  manual (4000).
+  `IMAGEN_LLM_MAX_LADO` px (768). La respuesta con imagen usa hasta `MAX_CONTEXTO_MULTIMODAL` caracteres del
+  manual (4000) y solo la imagen del usuario (`IMAGENES_REFERENCIA_RESPUESTA=0`): las referencias ya las compara
+  el análisis comparativo.
 - Si igual da 413, la respuesta se reintenta con la mitad del contexto y solo la imagen del usuario. Si tampoco
-  entra, el chat lo informa como limitación del modelo. Se puede bajar `MAX_CONTEXTO_MULTIMODAL` en `app/.env`,
+  entra, el chat lo informa como limitación del modelo. La consola muestra cuántos tokens pidió el pedido rechazado. Se puede bajar `MAX_CONTEXTO_MULTIMODAL` en `app/.env`,
   o usar un modelo o plan con límites más altos.
 
 **No aparecen imágenes del manual**

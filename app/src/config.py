@@ -35,6 +35,12 @@ IMAGEN_LLM_MAX_LADO = int(os.getenv("IMAGEN_LLM_MAX_LADO", "768"))
 # contexto y solo la imagen del usuario.
 MAX_CONTEXTO_MULTIMODAL = int(os.getenv("MAX_CONTEXTO_MULTIMODAL", "4000"))
 
+# Imágenes de referencia del manual que van en el pedido de la respuesta, además
+# de la del usuario. El análisis comparativo ya las mira, y sus descripciones
+# del manual van en el texto. Con 2, la respuesta seguía pasando los 7000 tokens
+# de entrada y salía recién en el reintento.
+IMAGENES_REFERENCIA_RESPUESTA = int(os.getenv("IMAGENES_REFERENCIA_RESPUESTA", "0"))
+
 # Fragmentos vecinos (consultas sin imagen): a los resultados de texto se les
 # suman los chunks que los siguen o preceden en el PDF, hasta
 # VECINOS_EXTRA_CHARS caracteres en total (0 = desactivado). La prioridad de un
