@@ -26,7 +26,8 @@ from .claves import crear_chat_groq
 from .classifier import ClasificadorSemantico
 from .config import (
     COLLECTION_CHUNKS, COLLECTION_IMAGENES, DIRECTORIO_IMAGENES, DIRECTORIO_PDFS,
-    FEATURES_DISCRIMINATORIAS, IMAGEN_LLM_MAX_LADO, LLM_MODELO, MAX_CONTEXTO_PROMPT, MAX_IMAGENES_LLM,
+    FEATURES_DISCRIMINATORIAS, IMAGEN_LLM_MAX_LADO, LLM_MODELO, MAX_CONTEXTO_MULTIMODAL, MAX_CONTEXTO_PROMPT,
+    MAX_IMAGENES_LLM,
     PROMPTS_OPTIMIZADOS,
     PROMPTS_OPTIMIZADOS_PATH, QDRANT_PATH, SIMILARITY_THRESHOLD, TRAZAS_DIR, TRAZAS_HABILITADAS,
     _safe, normalizar,
@@ -64,6 +65,11 @@ def _imagen_data_url(path: str) -> str:
         buf = io.BytesIO()
         img.save(buf, format="JPEG", quality=90)
     return "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode("utf-8")
+
+
+def _es_pedido_demasiado_grande(error: Exception) -> bool:
+    """413 de Groq: el pedido solo ya supera el límite de tokens de entrada por minuto."""
+    return getattr(error, "status_code", None) == 413 or "Request too large" in str(error)
 
 
 class AsistenteHistologiaQdrant:
@@ -787,10 +793,20 @@ class AsistenteHistologiaQdrant:
         content_parts = self._build_content_parts(es_solo_texto, state)
 
         try:
-            resp = await invoke_con_reintento(self.llm, [
-                SystemMessage(content=system_prompt),
-                HumanMessage(content=content_parts),
-            ])
+            try:
+                resp = await invoke_con_reintento(self.llm, [
+                    SystemMessage(content=system_prompt),
+                    HumanMessage(content=content_parts),
+                ])
+            except Exception as e:
+                if not _es_pedido_demasiado_grande(e):
+                    raise
+                print("   ⚠️ Pedido demasiado grande para el límite de tokens de entrada (413): "
+                      "se reintenta con la mitad del contexto y sin imágenes de referencia")
+                resp = await invoke_con_reintento(self.llm, [
+                    SystemMessage(content=system_prompt),
+                    HumanMessage(content=self._build_content_parts(es_solo_texto, state, reducido=True)),
+                ])
             state["respuesta_final"] = resp.content
 
             # Auto-append source citation if missing
@@ -811,7 +827,15 @@ class AsistenteHistologiaQdrant:
             print(f"✅ Respuesta: {len(resp.content)} chars")
         except Exception as e:
             print(f"❌ Error: {e}")
-            state["respuesta_final"] = f"Error: {e}"
+            if _es_pedido_demasiado_grande(e):
+                state["respuesta_final"] = (
+                    "No pude generar la respuesta por una limitación del modelo: en el plan gratuito "
+                    "de Groq, Qwen admite hasta 7000 tokens de entrada por minuto, y esta consulta "
+                    "(imagen, contexto del manual y análisis) los supera incluso achicada. "
+                    "Probá con una pregunta más concreta sobre la imagen o en una conversación nueva."
+                )
+            else:
+                state["respuesta_final"] = f"Error: {e}"
 
         # Replace image references with exact matches from Qdrant
         if state.get("mostrar_imagenes") and state.get("respuesta_final"):
@@ -940,20 +964,27 @@ class AsistenteHistologiaQdrant:
                 + ("\n\nIMPORTANTE: El análisis comparativo tiene PRIORIDAD en el diagnóstico." if tiene_comparativo else "")
             )
 
-    def _build_content_parts(self, es_solo_texto: bool, state: AgentState) -> list:
+    def _build_content_parts(self, es_solo_texto: bool, state: AgentState, reducido: bool = False) -> list:
+        """Mensaje de usuario para la respuesta. Con `reducido` (reintento tras un
+        413 por el límite de tokens de entrada) va la mitad del contexto, textos
+        de análisis más cortos y ninguna imagen de referencia."""
         content_parts = []
         historial_str = _safe(state.get("historial_conversacional"))
         if historial_str:
             content_parts.append({"type": "text", "text": f"**HISTORIAL:**\n{historial_str}\n\n---\n"})
 
         ctx_docs = state["contexto_documentos"]
-        if len(ctx_docs) > MAX_CONTEXTO_PROMPT:
-            ctx_docs = ctx_docs[:MAX_CONTEXTO_PROMPT] + "\n... [contexto truncado]"
+        limite_ctx = MAX_CONTEXTO_PROMPT if es_solo_texto else MAX_CONTEXTO_MULTIMODAL
+        if reducido:
+            limite_ctx //= 2
+        if len(ctx_docs) > limite_ctx:
+            ctx_docs = ctx_docs[:limite_ctx] + "\n... [contexto truncado]"
 
         analisis_comp_str = _safe(state.get("analisis_comparativo"))
         estructura_str = _safe(state.get("estructura_identificada"))
         analisis_visual_str = _safe(state.get("analisis_visual"), "No disponible")
-        seccion_comp = f"\n\n**ANÁLISIS COMPARATIVO:**\n{analisis_comp_str[:2000]}" if analisis_comp_str else ""
+        largo_comp, largo_visual = (800, 400) if reducido else (1500, 800)
+        seccion_comp = f"\n\n**ANÁLISIS COMPARATIVO:**\n{analisis_comp_str[:largo_comp]}" if analisis_comp_str else ""
         seccion_est = f"\n\n**ESTRUCTURA IDENTIFICADA:** {estructura_str}" if estructura_str else ""
 
         if es_solo_texto:
@@ -968,7 +999,7 @@ class AsistenteHistologiaQdrant:
                 f"**TÉRMINOS:** {_safe(state.get('terminos_busqueda'))[:300]}\n\n"
                 f"**ENTIDADES:** {json.dumps(state.get('entidades_consulta', {}), ensure_ascii=False)}\n\n"
                 f"**TEMA:** {_safe(state.get('tema_encontrado'), 'N/A')}\n\n"
-                f"**ANÁLISIS VISUAL:**\n{analisis_visual_str[:800]}\n\n"
+                f"**ANÁLISIS VISUAL:**\n{analisis_visual_str[:largo_visual]}\n\n"
             )
         content_parts.append({"type": "text", "text": (
             f"**CONSULTA:** {state['consulta_texto']}\n\n"
@@ -991,7 +1022,7 @@ class AsistenteHistologiaQdrant:
             except Exception as e:
                 print(f"   ⚠️ No se pudo añadir imagen usuario: {e}")
 
-        if not es_solo_texto:
+        if not es_solo_texto and not reducido:
             for img_path in state.get("imagenes_recuperadas", [])[:3]:
                 if not os.path.exists(img_path):
                     continue

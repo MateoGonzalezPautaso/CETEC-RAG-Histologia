@@ -27,6 +27,14 @@ MAX_IMAGENES_LLM = int(os.getenv("MAX_IMAGENES_LLM", "3"))
 # cuesta unos 750 tokens como máximo.
 IMAGEN_LLM_MAX_LADO = int(os.getenv("IMAGEN_LLM_MAX_LADO", "768"))
 
+# Tope de caracteres de las secciones del manual en la respuesta con imagen.
+# Ese pedido suma además el análisis visual, el comparativo, las descripciones
+# de las imágenes y hasta 3 imágenes: con MAX_CONTEXTO_PROMPT pedía 8171 tokens
+# de entrada y Qwen admite 7000 por minuto (413). Achicar las imágenes no
+# cambió la cuenta. Si igual da 413, la respuesta se reintenta con la mitad de
+# contexto y solo la imagen del usuario.
+MAX_CONTEXTO_MULTIMODAL = int(os.getenv("MAX_CONTEXTO_MULTIMODAL", "4000"))
+
 # Fragmentos vecinos (consultas sin imagen): a los resultados de texto se les
 # suman los chunks que los siguen o preceden en el PDF, hasta
 # VECINOS_EXTRA_CHARS caracteres en total (0 = desactivado). La prioridad de un

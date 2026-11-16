@@ -494,6 +494,15 @@ Material complementario para entender el diseño, las decisiones y los resultado
 - La cuota de Groq se resetea diariamente. Esperar, o cargar varias keys en `GROQ_API_KEYS` para que se roten solas (pipeline, juez y GEPA). Una key con límite diario queda en pausa 1 hora (`GROQ_COOLDOWN_DIARIO_S`) y una con límite por minuto, 60 s (`GROQ_COOLDOWN_MINUTO_S`). Si todas las keys están en pausa por límites por minuto, la llamada espera y reintenta hasta 10 minutos (`GROQ_ESPERA_TOTAL_S`) antes de fallar.
 - El sistema bloquea automáticamente nuevas llamadas por 5 minutos tras detectar cuota agotada (configurable con `LLM_QUOTA_BLOCK_SECONDS`).
 
+**Consultas con imagen: "Too many images" (400) o "Request too large" (413)**
+- Son limitaciones de Qwen en el plan gratuito de Groq: acepta hasta 3 imágenes por pedido y 7000 tokens de
+  entrada por minuto. Cada pedido manda como máximo `MAX_IMAGENES_LLM` imágenes (3), achicadas a
+  `IMAGEN_LLM_MAX_LADO` px (768), y la respuesta con imagen usa hasta `MAX_CONTEXTO_MULTIMODAL` caracteres del
+  manual (4000).
+- Si igual da 413, la respuesta se reintenta con la mitad del contexto y solo la imagen del usuario. Si tampoco
+  entra, el chat lo informa como limitación del modelo. Se puede bajar `MAX_CONTEXTO_MULTIMODAL` en `app/.env`,
+  o usar un modelo o plan con límites más altos.
+
 **No aparecen imágenes del manual**
 - Verificar que los PDFs estén en `data/pdf/` o `app/pdf/` y que Qdrant tenga datos (`/api/status` muestra `n_temas > 0`).
 - **UNI debe haber cargado** (ver arriba): sin UNI no se indexan imágenes.
