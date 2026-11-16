@@ -20,6 +20,13 @@ MAX_CONTEXTO_PROMPT = 8000
 # many images provided"); Llama-4-Scout aceptaba 5.
 MAX_IMAGENES_LLM = int(os.getenv("MAX_IMAGENES_LLM", "3"))
 
+# Lado mayor, en píxeles, de cada imagen que se manda al LLM (0 = tamaño
+# original). Los tokens de una imagen crecen con su área, y con el límite de
+# 7000 tokens de entrada por minuto de Qwen tres imágenes grandes más el
+# contexto superan el pedido (413 "Request too large"). A 768 px, cada imagen
+# cuesta unos 750 tokens como máximo.
+IMAGEN_LLM_MAX_LADO = int(os.getenv("IMAGEN_LLM_MAX_LADO", "768"))
+
 # Fragmentos vecinos (consultas sin imagen): a los resultados de texto se les
 # suman los chunks que los siguen o preceden en el PDF, hasta
 # VECINOS_EXTRA_CHARS caracteres en total (0 = desactivado). La prioridad de un

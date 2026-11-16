@@ -7,6 +7,7 @@ All public entry points are async.
 
 import base64
 import glob
+import io
 import json
 import os
 import re
@@ -25,7 +26,8 @@ from .claves import crear_chat_groq
 from .classifier import ClasificadorSemantico
 from .config import (
     COLLECTION_CHUNKS, COLLECTION_IMAGENES, DIRECTORIO_IMAGENES, DIRECTORIO_PDFS,
-    FEATURES_DISCRIMINATORIAS, LLM_MODELO, MAX_CONTEXTO_PROMPT, MAX_IMAGENES_LLM, PROMPTS_OPTIMIZADOS,
+    FEATURES_DISCRIMINATORIAS, IMAGEN_LLM_MAX_LADO, LLM_MODELO, MAX_CONTEXTO_PROMPT, MAX_IMAGENES_LLM,
+    PROMPTS_OPTIMIZADOS,
     PROMPTS_OPTIMIZADOS_PATH, QDRANT_PATH, SIMILARITY_THRESHOLD, TRAZAS_DIR, TRAZAS_HABILITADAS,
     _safe, normalizar,
 )
@@ -41,6 +43,27 @@ from .memory import SemanticMemory
 from .prompts import CLAVE_RESPUESTA_TEXTO, INSTRUCCION_BASE_TEXTO, INSTRUCCION_PROSA, PromptsOptimizados
 from .qdrant_store import QdrantVectorStore
 from .trazas import RegistroTrazas, construir_traza
+
+
+def _imagen_data_url(path: str) -> str:
+    """Data URL de una imagen para el LLM, con el lado mayor reducido a IMAGEN_LLM_MAX_LADO.
+
+    Los tokens que cuenta Groq por imagen crecen con su área: sin achicar, una
+    captura de 1500 px más dos referencias del manual y el contexto pasan el
+    límite de tokens de entrada de Qwen.
+    """
+    if IMAGEN_LLM_MAX_LADO <= 0:
+        with open(path, "rb") as f:
+            data = base64.b64encode(f.read()).decode("utf-8")
+        mime = "image/png" if os.path.splitext(path)[1].lower() == ".png" else "image/jpeg"
+        return f"data:{mime};base64,{data}"
+    from PIL import Image
+    with Image.open(path) as img:
+        img = img.convert("RGB")
+        img.thumbnail((IMAGEN_LLM_MAX_LADO, IMAGEN_LLM_MAX_LADO), Image.LANCZOS)
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=90)
+    return "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode("utf-8")
 
 
 class AsistenteHistologiaQdrant:
@@ -657,11 +680,8 @@ class AsistenteHistologiaQdrant:
         )}]
 
         try:
-            with open(state["imagen_path"], "rb") as f:
-                data_u = base64.b64encode(f.read()).decode("utf-8")
-            ext = os.path.splitext(state["imagen_path"])[1].lower()
-            mime = "image/png" if ext == ".png" else "image/jpeg"
-            content_parts.append({"type": "image_url", "image_url": {"url": f"data:{mime};base64,{data_u}"}})
+            data_u = _imagen_data_url(state["imagen_path"])
+            content_parts.append({"type": "image_url", "image_url": {"url": data_u}})
         except Exception as e:
             print(f"⚠️ No se pudo cargar imagen usuario: {e}")
             state["analisis_comparativo"] = None
@@ -679,11 +699,8 @@ class AsistenteHistologiaQdrant:
                 f"DESCRIPCIÓN DEL MANUAL: {texto_ref}"
             )})
             try:
-                with open(ref_path, "rb") as f:
-                    data_r = base64.b64encode(f.read()).decode("utf-8")
-                ext = os.path.splitext(ref_path)[1].lower()
-                mime = "image/png" if ext == ".png" else "image/jpeg"
-                content_parts.append({"type": "image_url", "image_url": {"url": f"data:{mime};base64,{data_r}"}})
+                data_r = _imagen_data_url(ref_path)
+                content_parts.append({"type": "image_url", "image_url": {"url": data_r}})
             except Exception as e:
                 print(f"  ⚠️ No se pudo cargar {ref_path}: {e}")
 
@@ -965,14 +982,11 @@ class AsistenteHistologiaQdrant:
         imagen_path = state.get("imagen_path")
         if state.get("tiene_imagen") and imagen_path and os.path.exists(imagen_path):
             try:
-                with open(imagen_path, "rb") as f:
-                    data = base64.b64encode(f.read()).decode("utf-8")
-                ext = os.path.splitext(imagen_path)[1].lower()
-                mime = "image/png" if ext == ".png" else "image/jpeg"
+                data = _imagen_data_url(imagen_path)
                 label = ("NUEVA IMAGEN" if state.get("imagen_es_nueva")
                          else f"IMAGEN ACTIVA (turno {self._get_memoria(state.get('user_id')).imagen_turno_subida})")
                 content_parts.append({"type": "text", "text": f"\n**{label}:**"})
-                content_parts.append({"type": "image_url", "image_url": {"url": f"data:{mime};base64,{data}"}})
+                content_parts.append({"type": "image_url", "image_url": {"url": data}})
                 imagenes_enviadas += 1
             except Exception as e:
                 print(f"   ⚠️ No se pudo añadir imagen usuario: {e}")
@@ -984,12 +998,9 @@ class AsistenteHistologiaQdrant:
                 if imagenes_enviadas >= MAX_IMAGENES_LLM:
                     break
                 try:
-                    with open(img_path, "rb") as f:
-                        data = base64.b64encode(f.read()).decode("utf-8")
-                    ext = os.path.splitext(img_path)[1].lower()
-                    mime = "image/png" if ext == ".png" else "image/jpeg"
+                    data = _imagen_data_url(img_path)
                     content_parts.append({"type": "text", "text": f"\n**REFERENCIA [Imagen: {os.path.basename(img_path)}]:**"})
-                    content_parts.append({"type": "image_url", "image_url": {"url": f"data:{mime};base64,{data}"}})
+                    content_parts.append({"type": "image_url", "image_url": {"url": data}})
                     imagenes_enviadas += 1
                 except Exception as e:
                     print(f"   ⚠️ {img_path}: {e}")
@@ -1229,10 +1240,7 @@ class AsistenteHistologiaQdrant:
 
     async def _describir_imagen(self, imagen_path: str) -> str:
         try:
-            with open(imagen_path, "rb") as f:
-                data = base64.b64encode(f.read()).decode("utf-8")
-            ext = os.path.splitext(imagen_path)[1].lower()
-            mime = "image/png" if ext == ".png" else "image/jpeg"
+            data = _imagen_data_url(imagen_path)
             features_lista = "\n".join(f"  {i+1}. {f}" for i, f in enumerate(FEATURES_DISCRIMINATORIAS))
             msg = HumanMessage(content=[
                 {"type": "text", "text": (
@@ -1244,7 +1252,7 @@ class AsistenteHistologiaQdrant:
                     "PARTE 3 — DIAGNÓSTICO DIFERENCIAL (mínimo 3 opciones):\n"
                     "Para cada opción, listá evidencias a favor y en contra."
                 )},
-                {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{data}"}},
+                {"type": "image_url", "image_url": {"url": data}},
             ])
             resp = await invoke_con_reintento(self.llm, [msg])
             return resp.content
